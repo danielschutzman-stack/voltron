@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voltron Beta — How It Works</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f6fb; color: #1a1a2e; padding: 40px 24px; line-height: 1.6;
+  }
+  .page { max-width: 960px; margin: 0 auto; }
+
+  .header {
+    background: linear-gradient(135deg, #1D2D50 0%, #2E5CE5 100%);
+    border-radius: 14px; padding: 44px 40px; margin-bottom: 36px; color: white;
+  }
+  .header .badge {
+    display: inline-block; background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3); border-radius: 20px;
+    padding: 4px 14px; font-size: 11px; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase; margin-bottom: 14px;
+  }
+  .header h1 { font-size: 30px; font-weight: 800; margin-bottom: 10px; }
+  .header p  { font-size: 15px; opacity: 0.82; max-width: 680px; }
+  .header .meta { margin-top: 22px; display: flex; gap: 28px; flex-wrap: wrap; }
+  .header .meta-item { font-size: 13px; opacity: 0.72; }
+  .header .meta-item span { font-weight: 700; opacity: 1; }
+
+  .toc { background: white; border-radius: 12px; padding: 24px 28px; margin-bottom: 36px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .toc h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #2E5CE5; margin-bottom: 14px; font-weight: 700; }
+  .toc ol { padding-left: 20px; }
+  .toc li { font-size: 14px; margin-bottom: 6px; }
+  .toc a  { color: #2E5CE5; text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  .section-label {
+    font-size: 11px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #2E5CE5; margin: 40px 0 14px 4px;
+  }
+
+  .card { background: white; border-radius: 12px; margin-bottom: 22px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); overflow: hidden; }
+  .card-header { display: flex; align-items: flex-start; gap: 16px; padding: 22px 26px 18px; border-bottom: 1px solid #f0f2f7; }
+  .card-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+  .ci-blue   { background: #EBF2FF; }
+  .ci-green  { background: #E8F5E9; }
+  .ci-orange { background: #FFF3E0; }
+  .ci-purple { background: #F3E5F5; }
+  .ci-teal   { background: #E0F7FA; }
+  .ci-red    { background: #FFEBEE; }
+  .ci-gold   { background: #FFFDE7; }
+  .card-title { font-size: 17px; font-weight: 700; color: #1D2D50; margin-bottom: 4px; }
+  .card-sub   { font-size: 13px; color: #888; }
+  .card-body  { padding: 22px 26px; }
+
+  /* Plain English block */
+  .plain-english {
+    background: #f8f9fd; border-radius: 10px; padding: 18px 20px;
+    margin-bottom: 20px; border-left: 4px solid #2E5CE5;
+  }
+  .plain-english .pe-label {
+    font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 1px; color: #2E5CE5; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .plain-english p  { font-size: 14.5px; color: #333; margin-bottom: 8px; line-height: 1.75; }
+  .plain-english p:last-child { margin-bottom: 0; }
+  .plain-english ul { padding-left: 20px; margin-top: 6px; }
+  .plain-english li { font-size: 14.5px; color: #333; margin-bottom: 6px; line-height: 1.75; }
+
+  /* Tech specs block */
+  .tech-specs { margin-top: 20px; }
+  .tech-label {
+    font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 1px; color: #aaa; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tech-label::after { content: ""; flex: 1; height: 1px; background: #eee; }
+
+  .card-body h4 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7px; color: #aaa; margin: 18px 0 8px;
+  }
+  .card-body h4:first-child { margin-top: 0; }
+  .card-body p  { font-size: 14px; color: #444; margin-bottom: 8px; }
+  .card-body ul, .card-body ol { padding-left: 20px; margin-bottom: 8px; }
+  .card-body li { font-size: 14px; color: #444; margin-bottom: 4px; }
+  .card-body strong { color: #1D2D50; }
+
+  .code { background: #1e2433; border-radius: 8px; padding: 14px 16px; margin: 10px 0; overflow-x: auto; }
+  .code code { font-family: "SF Mono","Fira Code",monospace; font-size: 12.5px; color: #a8d8ea; line-height: 1.65; white-space: pre; }
+  .code .cm { color: #6a737d; } .code .kw { color: #f97583; }
+  .code .st { color: #9ecbff; } .code .fn { color: #b392f0; }
+  .code .ok { color: #85e89d; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 10px 0; }
+  .steps li { counter-increment: step; display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; font-size: 14px; color: #444; }
+  .steps li::before { content: counter(step); background: #2E5CE5; color: white; font-size: 11px; font-weight: 700; min-width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+
+  table.dt { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+  table.dt th { background: #f0f2f7; padding: 9px 13px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #555; }
+  table.dt td { padding: 9px 13px; border-bottom: 1px solid #f0f2f7; color: #333; vertical-align: top; }
+  table.dt tr:last-child td { border-bottom: none; }
+  table.dt .hl td { background: #EBF2FF; }
+  .good { color: #2E7D32; font-weight: 600; }
+  .warn { color: #E65100; font-weight: 600; }
+  .bad  { color: #C62828; font-weight: 600; }
+
+  .callout { border-radius: 8px; padding: 13px 16px; margin: 12px 0; font-size: 13.5px; line-height: 1.65; border-left: 4px solid; }
+  .callout.info  { background: #EBF2FF; border-color: #2E5CE5; color: #1D2D50; }
+  .callout.warn  { background: #FFF8E1; border-color: #F9A825; color: #5D4037; }
+  .callout.good  { background: #E8F5E9; border-color: #2E7D32; color: #1B5E20; }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 0; align-items: center; margin: 14px 0; }
+  .flow-step { background: #EBF2FF; border: 1.5px solid #2E5CE5; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; color: #1D2D50; text-align: center; min-width: 110px; }
+  .flow-step.last { background: #1D2D50; border-color: #1D2D50; color: white; }
+  .flow-arrow { font-size: 18px; color: #2E5CE5; padding: 0 6px; font-weight: 700; }
+
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; margin: 2px 3px 2px 0; }
+  .pill-blue   { background: #EBF2FF; color: #2E5CE5; }
+  .pill-green  { background: #E8F5E9; color: #2E7D32; }
+  .pill-orange { background: #FFF3E0; color: #E65100; }
+  .pill-gray   { background: #f0f2f7; color: #555; }
+
+  .footer { margin-top: 56px; padding-top: 24px; border-top: 1px solid #dde1ec; text-align: center; font-size: 12px; color: #999; line-height: 2; }
+
+  @media (max-width: 600px) { .header { padding: 28px 22px; } .card-body { padding: 16px 18px; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="header">
+  <div class="badge">Technical Documentation</div>
+  <h1>Voltron Beta — How It Works</h1>
+  <p>A complete reference for how Voltron Beta is built, how it queries ThoughtSpot data, and how the PG Plan and Territory workflows execute — written for both non-technical and technical audiences. Each section leads with a plain-English explanation, followed by the technical detail.</p>
+  <div class="meta">
+    <div class="meta-item">Version: <span>Post March 17, 2026 Updates</span></div>
+    <div class="meta-item">Gists updated: <span>March 16–17, 2026</span></div>
+    <div class="meta-item">Audience: <span>All — AEs, Builders, Admins</span></div>
+  </div>
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#s1">Session Bootstrap — How Every Session Starts</a></li>
+    <li><a href="#s2">Query Infrastructure — How ThoughtSpot Data Is Fetched</a></li>
+    <li><a href="#s3">Intent Map — The 12 Query Types</a></li>
+    <li><a href="#s4">Territory Workflow — End to End</a></li>
+    <li><a href="#s5">PG Plan Builder — End to End</a></li>
+    <li><a href="#s6">Subagent Architecture — What Runs Where and Why</a></li>
+    <li><a href="#s7">Error Handling &amp; Fallback Logic</a></li>
+    <li><a href="#s8">Token Management &amp; Expiry</a></li>
+    <li><a href="#s9">Deliverable Generation</a></li>
+    <li><a href="#s10">How to Update Query Definitions</a></li>
+  </ol>
+</div>
+
+<!-- ══════════════════════════════════════════
+     1. SESSION BOOTSTRAP
+══════════════════════════════════════════ -->
+<div class="section-label" id="s1">1 · Session Bootstrap</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-blue">🚀</div>
+    <div>
+      <div class="card-title">How Every Session Starts</div>
+      <div class="card-sub">Runs automatically on first message — takes ~15–20 seconds</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>Think of it like a contractor picking up their tools before starting the job.</strong> Voltron is smart, but it doesn't permanently carry around all the specific instructions it needs to talk to ThoughtSpot, look up accounts, or structure research tasks. Those live in separate files stored on GitHub — a free, public file-hosting service.</p>
+      <p>When you start a session, Voltron spends about 15–20 seconds fetching those files and loading them into its working memory. After that, it's fully equipped for everything — pulling territory data, running PG plans, launching research agents — for the rest of the session.</p>
+      <p><strong>Why store the files externally instead of building them in permanently?</strong> Because it means we can fix bugs or add new features just by editing a file on GitHub. No reconfiguring Voltron, no IT tickets, no downtime. When the territory pull was broken on March 16th, we updated two files on GitHub and every AE got the fix automatically on their next session.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <p>Every Voltron session begins with a 4-step bootstrap sequence that wires up the Python query infrastructure. It runs once at session start and is skipped if files already exist in the sandbox.</p>
+      <ol class="steps">
+        <li><strong>Fetch 4 files concurrently from GitHub Gists</strong> — <code>bootstrap.py</code>, <code>ts_intent_map.py</code>, <code>ts_runner.py</code>, and <code>subagent_templates.py</code> fetched in parallel (~4–6s).</li>
+        <li><strong>Write and execute bootstrap.py</strong> — confirms the loader script is functional before proceeding.</li>
+        <li><strong>Call bootstrap() with the 3 helper file contents</strong> — <code>ts_intent_map.py</code> + <code>ts_runner.py</code> are concatenated into <code>/sandbox/ts_fallback_map.py</code>; <code>subagent_templates.py</code> written to <code>/sandbox/subagent_templates.py</code>. Files skipped if they already exist.</li>
+        <li><strong>Session declared ready</strong> — agent confirms setup and presents the opening question.</li>
+      </ol>
+
+      <h4>The 4 Gist Files</h4>
+      <table class="dt">
+        <thead><tr><th>File</th><th>Gist ID</th><th>What It Contains</th><th>Written To</th></tr></thead>
+        <tbody>
+          <tr><td><strong>bootstrap.py</strong></td><td><code>70cfe88f...</code></td><td>Tiny loader that writes the other helper files to sandbox</td><td><code>/sandbox/bootstrap.py</code></td></tr>
+          <tr><td><strong>ts_intent_map.py</strong></td><td><code>a743be0f...</code></td><td>WORKSHEETS dict + INTENT_MAP with all 12 query templates</td><td>Combined into <code>ts_fallback_map.py</code></td></tr>
+          <tr><td><strong>ts_runner.py</strong></td><td><code>5c20309f...</code></td><td><code>_ts_query()</code> and <code>run_with_fallback()</code> functions</td><td>Combined into <code>ts_fallback_map.py</code></td></tr>
+          <tr><td><strong>subagent_templates.py</strong></td><td><code>1c80cd01...</code></td><td><code>render()</code> function + all subagent objective templates</td><td><code>/sandbox/subagent_templates.py</code></td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout warn"><strong>If bootstrap fails:</strong> If GitHub is unreachable, Voltron cannot load its query tools and ThoughtSpot data will be unavailable. It will surface the error and ask the user to retry. A page refresh usually resolves it.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     2. QUERY INFRASTRUCTURE
+══════════════════════════════════════════ -->
+<div class="section-label" id="s2">2 · Query Infrastructure</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-teal">🔌</div>
+    <div>
+      <div class="card-title">How ThoughtSpot Data Is Fetched</div>
+      <div class="card-sub">run_with_fallback() · ThoughtSpot REST API v2 · 4 worksheets</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>When Voltron needs data from ThoughtSpot — your accounts, deal stages, MEDDPICC scores, activity history — it sends a structured question directly to ThoughtSpot's database and gets back rows of data, just like a search.</strong></p>
+      <p>Every query goes through a smart wrapper called <code>run_with_fallback()</code>. Here's what makes it smart:</p>
+      <ul>
+        <li><strong>It has a backup plan.</strong> If the first query comes back empty, it automatically tries a slightly different version of the same question against a different data source — without you ever knowing it retried.</li>
+        <li><strong>It knows when your session has expired.</strong> ThoughtSpot tokens expire after ~60–90 minutes. If a query hits an expired token, it immediately surfaces a warning rather than silently failing.</li>
+        <li><strong>It times out gracefully.</strong> If ThoughtSpot takes more than 20 seconds to respond, it stops waiting and reports the issue — it never hangs indefinitely.</li>
+      </ul>
+      <p>There are four ThoughtSpot data sources (called worksheets) Voltron can query. Most territory and deal data lives in the <strong>GTM RevOps</strong> worksheet. Stakeholder and renewal data lives in <strong>studio GTM RevOps</strong>. Voltron picks the right one automatically based on what you're asking for.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>The Two Core Functions</h4>
+      <p><strong><code>_ts_query(query_string, worksheet_key, timeout=20)</code></strong> — Low-level. Fires POST to <code>/api/rest/2.0/searchdata</code>, handles auth, timeout, HTTP errors. Never called directly by the agent.</p>
+      <p><strong><code>run_with_fallback(intent, **variables)</code></strong> — High-level. Looks up intent in INTENT_MAP, formats query template, fires primary query, auto-retries fallback on empty/error. Always use this.</p>
+
+      <h4>API Details</h4>
+      <table class="dt">
+        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Endpoint</td><td><code>POST /api/rest/2.0/searchdata</code></td></tr>
+          <tr><td>Auth</td><td>Bearer token — <code>THOUGHTSPOT_TOKEN</code> env var (auto-injected per session)</td></tr>
+          <tr><td>Data format</td><td><code>COMPACT</code></td></tr>
+          <tr><td>Record size</td><td>1000 rows max per call</td></tr>
+          <tr><td>Timeout</td><td>20s per query</td></tr>
+          <tr><td>Response shape</td><td><code>{"contents": [{"column_names": [...], "data_rows": [...]}]}</code></td></tr>
+        </tbody>
+      </table>
+
+      <h4>The 4 Worksheets</h4>
+      <table class="dt">
+        <thead><tr><th>Key</th><th>Name</th><th>Columns</th><th>Primary Use</th></tr></thead>
+        <tbody>
+          <tr><td><code>revops</code></td><td>GTM RevOps</td><td>951</td><td>Territory, ICP, activity, MEDDPICC, opps</td></tr>
+          <tr><td><code>studio</code></td><td>studio GTM RevOps</td><td>79</td><td>Stakeholder map, CS data, ACV, renewal</td></tr>
+          <tr><td><code>campaigns</code></td><td>GTM Campaigns</td><td>648</td><td>Campaign attribution, MQL conversion</td></tr>
+          <tr><td><code>engage</code></td><td>GTM Engagements</td><td>33</td><td>Campaign engagement detail — always use with filters</td></tr>
+        </tbody>
+      </table>
+      <div class="callout warn"><strong>Always filter queries.</strong> Open queries against the 951-column RevOps worksheet will time out. Every intent requires either <code>owner_name</code> or <code>account_name</code> as a filter variable.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     3. INTENT MAP
+══════════════════════════════════════════ -->
+<div class="section-label" id="s3">3 · Intent Map</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-purple">🗺️</div>
+    <div>
+      <div class="card-title">The 12 Query Types</div>
+      <div class="card-sub">Each intent = a named question Voltron knows how to ask ThoughtSpot</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>Rather than writing a new database question from scratch every time, Voltron has a library of 12 pre-built query types — called "intents."</strong> Each one is a named, reusable question with a blank to fill in, like: <em>"What are all the accounts owned by ___?"</em> or <em>"What does the MEDDPICC scorecard look like for ___ account?"</em></p>
+      <p>Each intent also has a backup version. If the first attempt comes back empty, Voltron automatically tries the backup — which might ask the same question slightly differently, or pull from a different data source. This happens invisibly and instantly.</p>
+      <p>There are two types of intents: ones that pull data for a whole territory (filtered by the AE's name) and ones that pull data for a specific account (filtered by account name).</p>
+      <p>The newest intent — <strong>territory_overview</strong> — is the star of the show. It replaced five separate questions with one, cutting territory pull time from ~40 seconds down to ~2 seconds.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <p>Each INTENT_MAP entry is a 4-tuple: <code>(primary_ws, primary_template, fallback_ws, fallback_template)</code>. Templates use Python <code>.format()</code> with named variables.</p>
+
+      <h4>Owner-Scoped Intents — filter by AE name</h4>
+      <table class="dt">
+        <thead><tr><th>Intent</th><th>Variable</th><th>Primary</th><th>Fallback</th><th>Returns</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td><strong>territory_overview ⭐</strong></td><td><code>owner_name</code></td><td>revops</td><td>studio</td><td>All territory data in one shot: segment, ICP scores, last activity, days since touch, 6S reach, vertical</td></tr>
+          <tr><td>account_ownership</td><td><code>owner_name</code></td><td>revops</td><td>studio</td><td>Account list with owner, team, segment, status</td></tr>
+          <tr><td>6sense_intent</td><td><code>owner_name</code></td><td>revops</td><td>revops</td><td>6S reach score + person intent score</td></tr>
+          <tr><td>last_activity</td><td><code>owner_name</code></td><td>revops</td><td>revops</td><td>Last activity date, days since touch, touch group</td></tr>
+          <tr><td>icp_scores</td><td><code>owner_name</code></td><td>revops</td><td>studio</td><td>TSA ICP score + grade + TSE ICP score</td></tr>
+          <tr><td>account_vertical</td><td><code>owner_name</code></td><td>revops</td><td>studio</td><td>Main vertical, sub-vertical, Clearbit industry</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Account-Scoped Intents — filter by account name</h4>
+      <table class="dt">
+        <thead><tr><th>Intent</th><th>Variable</th><th>Primary</th><th>Fallback</th><th>Returns</th></tr></thead>
+        <tbody>
+          <tr><td>deal_stage</td><td><code>account_name</code></td><td>revops</td><td>revops</td><td>All opps with stage, pipeline flag, owner, activity dates</td></tr>
+          <tr><td>deal_funnel_timing</td><td><code>account_name</code></td><td>revops</td><td>revops</td><td>Stage duration: S1/S2/S3 duration, M0-to-S7 total</td></tr>
+          <tr><td>meddpicc_flags</td><td><code>account_name</code></td><td>revops</td><td>revops</td><td>Boolean validated flags for all 8 MEDDPICC components</td></tr>
+          <tr><td>meddpicc_detail</td><td><code>account_name</code></td><td>revops</td><td>revops</td><td>Full text: Champion, EB, Pain, Metrics, Decision Criteria/Process, Competition</td></tr>
+          <tr><td>activity_history</td><td><code>account_name</code></td><td>revops</td><td>revops</td><td>Activity log: type, subject, time, owner, direction</td></tr>
+          <tr><td>sfdc_stakeholder</td><td><code>account_name</code></td><td>studio</td><td>revops</td><td>Account owner, opp owner, CS name, Executive Business Sponsor, opp status</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Filter Syntax Rule</h4>
+      <div class="code"><code><span class="ok"># Correct — brackets required</span>
+[Account Name] [Account Segment] [Account Owner Name] = <span class="st">&#39;Lee Corning&#39;</span>
+
+<span class="bad"># Wrong — causes HTTP 400</span>
+[Account Name] [Account Segment] owner name = <span class="st">&#39;Lee Corning&#39;</span></code></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     4. TERRITORY WORKFLOW
+══════════════════════════════════════════ -->
+<div class="section-label" id="s4">4 · Territory Workflow</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-green">🗂️</div>
+    <div>
+      <div class="card-title">Territory Workflow — End to End</div>
+      <div class="card-sub">Trigger: "Explore my territory" or "pg" → territory path</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>The territory workflow is designed to get an AE from "I want to see my accounts" to "I have a prioritized list and research on my top 5" as fast as possible.</strong></p>
+      <p>Here's how it flows in plain terms:</p>
+      <ul>
+        <li><strong>Step 1 — Voltron looks you up automatically.</strong> Before asking you anything, it pulls your accounts from ThoughtSpot using your name. If it finds them, it skips the "who are you?" question entirely.</li>
+        <li><strong>Step 2 — You pick how to rank your top 5.</strong> By ICP score, by how long since the last activity, by 6Sense intent signal, by vertical — your choice. All data is already loaded from Step 1, so this is instant.</li>
+        <li><strong>Step 3 — Fast Sweep runs automatically across all 5 accounts.</strong> No module selection needed. Voltron kicks off web research and case study matching in the background while simultaneously pulling SFDC stakeholder data and 6Sense signals from ThoughtSpot. These run in parallel, so it takes roughly the same time as doing one account.</li>
+        <li><strong>Step 4 — You pick one account for a full deep-dive.</strong> The data from the Fast Sweep is already loaded — no repeat work. Six more research modules are available, and you can run all of them or just the ones you want.</li>
+        <li><strong>Throughout — a master Excel file is kept up to date.</strong> It updates as each piece of research comes in, so you can download a live version at any point. You don't have to wait for everything to finish.</li>
+      </ul>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <div class="flow">
+        <div class="flow-step">Ownership Check</div><div class="flow-arrow">→</div>
+        <div class="flow-step">Filter Selection</div><div class="flow-arrow">→</div>
+        <div class="flow-step">Top 5 Pull</div><div class="flow-arrow">→</div>
+        <div class="flow-step">Fast Sweep ×5</div><div class="flow-arrow">→</div>
+        <div class="flow-step">Account Select</div><div class="flow-arrow">→</div>
+        <div class="flow-step last">Full PG Plan</div>
+      </div>
+
+      <h4>Fast Sweep — 2 parallel execution tracks</h4>
+      <table class="dt">
+        <thead><tr><th>Track</th><th>Modules</th><th>Method</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>Web research</td><td>Web Research, Case Study Matcher</td><td>Sequential <code>spawn_subagent</code> calls (run concurrently after spawning)</td><td>Background subagents</td></tr>
+          <tr><td>TS data</td><td>SFDC Stakeholder, 6Sense Intent</td><td><code>run_with_fallback()</code></td><td>Main thread</td></tr>
+        </tbody>
+      </table>
+      <div class="callout warn"><strong>Spawn rule:</strong> Never wrap <code>spawn_subagent</code> calls in <code>parallel_tool_exec</code> — causes an event loop conflict that silently drops most spawns. Spawn sequentially; they run concurrently after spawning.</div>
+
+      <h4>XLS Progressive Saving</h4>
+      <p>The territory workbook is created immediately after account confirmation. <code>wb.save()</code> is called after every <code>update_*()</code> call — not just at the end — so the file is always current and downloadable mid-sweep.</p>
+
+      <h4>Fast Sweep Modules (auto-selected — no user prompt)</h4>
+      <p><span class="pill pill-blue">Web Research</span> <span class="pill pill-blue">SFDC/TS Lookup</span> <span class="pill pill-blue">6Sense Intent</span> <span class="pill pill-blue">Case Study Matcher</span></p>
+
+      <h4>Remaining 6 Modules (deep-dive — user selects)</h4>
+      <p><span class="pill pill-blue">TSumbleV1</span> <span class="pill pill-blue">Deal Story</span> <span class="pill pill-blue">Sales Call Analyzer</span> <span class="pill pill-blue">Competitor Intel</span> <span class="pill pill-blue">Exec Profile Builder</span> <span class="pill pill-orange">Outreach Generator (always last)</span></p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     5. PG PLAN BUILDER
+══════════════════════════════════════════ -->
+<div class="section-label" id="s5">5 · PG Plan Builder</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-gold">📋</div>
+    <div>
+      <div class="card-title">PG Plan Builder — End to End</div>
+      <div class="card-sub">Trigger: "pg" or "PG a specific account"</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>The PG Plan Builder is Voltron's flagship workflow — it researches a single account as deeply as possible and turns everything into three ready-to-use deliverables.</strong></p>
+      <p>It runs up to 10 research modules simultaneously. Some of these pull live data directly from ThoughtSpot (deal history, MEDDPICC, stakeholder map, 6Sense signals). Others spin up background research agents that browse the web, scrape job postings, and look up executive profiles — all at the same time.</p>
+      <p>The three outputs it always produces:</p>
+      <ul>
+        <li><strong>Internal PG Report</strong> — everything Voltron found, organized into a scannable HTML document for the AE. Includes the full stakeholder map, MEDDPICC scorecard with named individuals, competitive landscape, recommended case studies, and outreach sequences.</li>
+        <li><strong>Customer-Facing One-Pager</strong> — a clean, professional HTML document safe to share with the prospect. No internal names, no deal stage language, no Voltron branding. Just: their challenges → how ThoughtSpot fits → proof points → a demo link.</li>
+        <li><strong>Updated Territory Excel</strong> — the master workbook is updated with links to both documents and the PG Plan Status is marked complete.</li>
+      </ul>
+      <p>One important safeguard: the one-pager is built from scratch for the external audience. Anything internal — stakeholder names, MEDDPICC terminology, deal stages, the AE's name — is never included.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>All 10 Modules</h4>
+      <table class="dt">
+        <thead><tr><th>#</th><th>Module</th><th>Method</th><th>Timing</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Web Research — company overview, news, strategy, tech stack</td><td>subagent</td><td>Parallel</td></tr>
+          <tr><td>2</td><td>TSumbleV1 — job postings (LinkedIn, Indeed, Glassdoor, Builtin)</td><td>subagent</td><td>Parallel</td></tr>
+          <tr><td>3</td><td>Deal Story — all opps, stage history, funnel timing</td><td><code>run_with_fallback</code> main thread</td><td>Parallel</td></tr>
+          <tr><td>4</td><td>Sales Call Analyzer — Gong MEDDPICC flags + detail, activity history</td><td><code>run_with_fallback</code> main thread</td><td>Parallel</td></tr>
+          <tr><td>5</td><td>SFDC/TS Lookup — stakeholder map: champion, EB, exec sponsor, opp owner, CS</td><td><code>run_with_fallback</code> main thread</td><td>Parallel</td></tr>
+          <tr><td>6</td><td>Competitor Intel — BI tools in use: Tableau, Power BI, Looker, etc.</td><td>subagent</td><td>Parallel</td></tr>
+          <tr><td>7</td><td>6Sense Intent Agent — intent score + topic signals</td><td><code>run_with_fallback</code> main thread</td><td>Parallel</td></tr>
+          <tr><td>8</td><td>Case Study Matcher — best-fit ThoughtSpot customer stories</td><td>subagent</td><td>Parallel</td></tr>
+          <tr><td>9</td><td>Exec Profile Builder — key stakeholder research</td><td>subagent</td><td>Parallel</td></tr>
+          <tr><td>10</td><td>Outreach Generator — personalized email + LinkedIn sequences</td><td>subagent</td><td><strong>Last only</strong></td></tr>
+        </tbody>
+      </table>
+
+      <h4>Stakeholder Map Cross-Reference Rules</h4>
+      <ul>
+        <li>Gong champion name ≠ SFDC Executive Business Sponsor → amber row + explicit callout</li>
+        <li>Role missing in both Gong and SFDC → red row + "⚠️ No champion identified — prioritize discovery"</li>
+        <li>Always show actual name from Gong detail — never just "validated/not validated"</li>
+      </ul>
+
+      <h4>One-Pager Hard Rules</h4>
+      <p>Never include: stakeholder names or titles, MEDDPICC terminology, deal stage, SFDC references, Voltron branding, AE name, or internal tools. Demo CTA always: <code>https://www.thoughtspot.com/demo</code></p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     6. SUBAGENT ARCHITECTURE
+══════════════════════════════════════════ -->
+<div class="section-label" id="s6">6 · Subagent Architecture</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-purple">🤖</div>
+    <div>
+      <div class="card-title">What Runs Where and Why</div>
+      <div class="card-sub">Main thread vs. background subagents — the decision framework</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>Voltron can spin up background "research agents" — mini versions of itself that go off and do a specific task while the main conversation keeps moving.</strong> But not everything gets handed off to a background agent. There's a deliberate split.</p>
+      <p><strong>ThoughtSpot data queries always run in the main thread — never handed off.</strong> Here's why:</p>
+      <ul>
+        <li>They're fast (2–15 seconds) — handing off to a background agent would actually be slower due to the overhead of spinning one up.</li>
+        <li>They need live access to your ThoughtSpot session token. If the token expires mid-query, the main thread can warn you instantly. A background agent would only discover the failure after a long wait.</li>
+        <li>They need context from the conversation — like the exact account name you're asking about. Background agents are "blind" to the conversation history and need everything spelled out for them.</li>
+      </ul>
+      <p><strong>Web research tasks always run as background agents.</strong> These are genuinely slow (a full web sweep can take 60–120 seconds), they don't need ThoughtSpot access, and they can run in parallel across multiple accounts at the same time — which is where the real time savings come from.</p>
+      <p>The rule of thumb: if it touches ThoughtSpot, it runs in the main thread. If it browses the web, it runs as a background agent.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>Main Thread vs. Subagent — Decision Table</h4>
+      <table class="dt">
+        <thead><tr><th>Factor</th><th>Main Thread ✅</th><th>Subagent ❌</th></tr></thead>
+        <tbody>
+          <tr><td>Latency</td><td>Query fires immediately (2–15s)</td><td>+15–30s spawn overhead before first query</td></tr>
+          <tr><td>Token expiry</td><td>Detected instantly, user warned in real time</td><td>Surfaces only after full spawn/run/wait cycle</td></tr>
+          <tr><td>Context access</td><td>Full conversation history available</td><td>Blind to prior turns — all context must be re-serialized</td></tr>
+          <tr><td>Error handling</td><td>Auto-fallback within same call (&lt;20s total)</td><td>Error discovered after 60–90s wait</td></tr>
+          <tr><td>Result usage</td><td>Data in Python variables, ready for synthesis</td><td>Must write to file, re-read into context</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Subagent Objective Construction</h4>
+      <p>All subagent objectives are built using <code>render(template_name, **variables)</code> from <code>subagent_templates.py</code>. Never construct objectives as raw strings.</p>
+      <div class="code"><code>objective = <span class="fn">render</span>(<span class="st">"web_research"</span>,
+    account_name=<span class="st">"Sysco"</span>,
+    website_url=<span class="st">"https://www.sysco.com"</span>,
+    industry=<span class="st">"Food Distribution"</span>,
+    output_file=<span class="st">"/sandbox/sysco_web.json"</span>
+)</code></div>
+
+      <h4>Available Subagent Templates</h4>
+      <p><span class="pill pill-blue">web_research</span> <span class="pill pill-blue">tsumble</span> <span class="pill pill-blue">competitor_intel</span> <span class="pill pill-blue">exec_profile</span> <span class="pill pill-blue">case_study_matcher</span> <span class="pill pill-orange">outreach_generator</span></p>
+
+      <div class="callout warn"><strong>Spawn rule:</strong> Call <code>spawn_subagent</code> sequentially (one at a time). They run concurrently after spawning. Never wrap inside <code>parallel_tool_exec</code> — causes event loop conflict.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     7. ERROR HANDLING
+══════════════════════════════════════════ -->
+<div class="section-label" id="s7">7 · Error Handling &amp; Fallback Logic</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-red">🛡️</div>
+    <div>
+      <div class="card-title">Error Handling &amp; Fallback Logic</div>
+      <div class="card-sub">What happens when things go wrong</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>Voltron is designed to keep going even when individual pieces fail.</strong> A missing data source or broken query never stops it from producing a report — it just notes the gap and keeps working with what it has.</p>
+      <p>There are four things that can happen when Voltron asks ThoughtSpot for data:</p>
+      <ul>
+        <li><strong>✅ Data comes back</strong> — great, used immediately.</li>
+        <li><strong>🔁 Empty response</strong> — Voltron automatically tries a backup version of the same question. If that's also empty, it notes "Data unavailable" in the report and moves on. The report still gets built.</li>
+        <li><strong>⚠️ Token expired</strong> — Voltron stops all ThoughtSpot queries immediately and tells you to refresh the page. It will not retry silently or keep failing. You refresh, it continues.</li>
+        <li><strong>❌ Unexpected error</strong> — noted in the report, everything else continues. A broken module never holds up the other nine.</li>
+      </ul>
+      <p>The same philosophy applies to web research: if LinkedIn blocks a job search, the agent immediately switches to a different source. If a company website is down, it notes it and moves on. Voltron never fabricates data to fill a gap — it just says what it couldn't find.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>Status Codes from run_with_fallback()</h4>
+      <table class="dt">
+        <thead><tr><th>Status</th><th>Meaning</th><th>Agent Action</th></tr></thead>
+        <tbody>
+          <tr><td><span class="good">ok</span></td><td>Data returned — column_names + data_rows populated</td><td>Use data for synthesis</td></tr>
+          <tr><td><span class="warn">empty</span></td><td>0 rows from both primary and fallback</td><td>Note "[Module]: Data unavailable" — do NOT block synthesis</td></tr>
+          <tr><td><span class="bad">token_expired</span></td><td>401/403 from ThoughtSpot API</td><td>Surface ⚠️ refresh message, halt all TS queries immediately</td></tr>
+          <tr><td><span class="bad">error</span></td><td>HTTP error, timeout, or parse failure</td><td>Note in report — do NOT block synthesis</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Fallback Logic (step by step)</h4>
+      <ol class="steps">
+        <li>Fire primary query (primary worksheet + primary template)</li>
+        <li>If <code>ok</code> → return immediately</li>
+        <li>If <code>token_expired</code> → halt, surface warning, stop</li>
+        <li>If <code>empty</code> or <code>error</code> → fire fallback query (different worksheet/template)</li>
+        <li>If fallback <code>ok</code> → return result with <code>used_fallback: true</code></li>
+        <li>If both fail → return <code>empty</code> or <code>error</code> — report gap, continue synthesis</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     8. TOKEN MANAGEMENT
+══════════════════════════════════════════ -->
+<div class="section-label" id="s8">8 · Token Management &amp; Expiry</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-orange">🔑</div>
+    <div>
+      <div class="card-title">Token Management &amp; Expiry</div>
+      <div class="card-sub">~60–90 minute session lifespan</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>To pull data from ThoughtSpot, Voltron uses a temporary access pass — called a token — that gets assigned at the start of every session.</strong> Think of it like a visitor badge at an office: it works all day, but it expires and can't be used tomorrow.</p>
+      <p>These tokens last roughly 60–90 minutes. For most sessions (a quick territory pull or a single PG plan), you'll never hit the limit. But for long working sessions — like doing a full territory sweep followed by multiple deep-dive PG plans — you might approach the expiry window.</p>
+      <p>Voltron handles this in two ways:</p>
+      <ul>
+        <li><strong>Proactive warning at 45 minutes:</strong> If you're doing something ThoughtSpot-heavy and the session has been running for 45+ minutes, Voltron will flag it: <em>"Heads up — we're at 45 minutes and tokens expire around 60–90 minutes. If queries start failing, a page refresh will fix it."</em></li>
+        <li><strong>Immediate halt if expired:</strong> If a query actually fails due to an expired token, Voltron stops all ThoughtSpot queries immediately and tells you exactly what to do. It won't keep trying and silently failing.</li>
+      </ul>
+      <p>The fix is always the same: refresh the page. That generates a new token and everything picks back up.</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <table class="dt">
+        <thead><tr><th>Detail</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Token source</td><td><code>THOUGHTSPOT_TOKEN</code> env variable — auto-injected per session by the platform</td></tr>
+          <tr><td>Token lifespan</td><td>~60–90 minutes from session start</td></tr>
+          <tr><td>Expiry detection</td><td>HTTP 401 or 403 response → <code>token_expired</code> status in <code>run_with_fallback()</code></td></tr>
+          <tr><td>Proactive warning threshold</td><td>45+ minutes active before a TS-dependent module runs</td></tr>
+          <tr><td>On expiry</td><td>Halt all TS queries, surface refresh message, wait for user confirmation — do NOT retry</td></tr>
+          <tr><td>Token security</td><td>Never displayed, logged, or returned — code validator blocks any output of env var contents</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     9. DELIVERABLE GENERATION
+══════════════════════════════════════════ -->
+<div class="section-label" id="s9">9 · Deliverable Generation</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-green">📄</div>
+    <div>
+      <div class="card-title">Deliverable Generation</div>
+      <div class="card-sub">Internal report · customer one-pager · territory Excel</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>Every PG plan produces three files automatically — no extra steps, no "would you like me to generate the report now?" prompts.</strong> As soon as research is done, Voltron synthesizes everything and generates all three at once.</p>
+      <ul>
+        <li><strong>Internal PG Report</strong> — a full HTML document for the AE's eyes only. Has everything: deal history, MEDDPICC scorecard, stakeholder map with Gong vs. SFDC cross-check, competitive landscape, relevant customer proof points, and personalized outreach drafts. It's designed to be used in deal prep, not shared with the customer.</li>
+        <li><strong>Customer-Facing One-Pager</strong> — a clean, polished HTML document that can go straight to the prospect. Built from scratch with only public-safe content: their business challenges, how ThoughtSpot addresses them, relevant proof points, and a link to book a demo. Nothing internal ever leaks in.</li>
+        <li><strong>Territory Excel</strong> — the master workbook is updated live throughout the session. Links to the PG report and one-pager are added, and the account's status is marked "PG Complete." You can download this at any point — it's saved after every update.</li>
+      </ul>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>3 Deliverables — Always Generated Immediately After Synthesis</h4>
+      <table class="dt">
+        <thead><tr><th>File</th><th>Audience</th><th>Key Content Rules</th></tr></thead>
+        <tbody>
+          <tr><td><code>{slug}_pg_report.html</code></td><td>Internal AE</td><td>All modules, MEDDPICC scorecard, stakeholder map (amber = Gong/SFDC mismatch, red = missing role), competitive intel, case studies, outreach sequences. Design: #1D2D50, #2E5CE5, #EBF2FF.</td></tr>
+          <tr><td><code>{slug}_onepager.html</code></td><td>External</td><td>No stakeholder names, no MEDDPICC language, no deal stage, no SFDC refs, no Voltron branding, no AE name. Demo CTA: <code>thoughtspot.com/demo</code> only. Print-friendly.</td></tr>
+          <tr><td><code>territory_pg_plan.xlsx</code></td><td>Internal AE</td><td>Built via <code>TerritoryWorkbook</code> — never from scratch. <code>wb.save()</code> called after every <code>update_*()</code>. Header: bold white on #1D2D50, frozen. Alternating rows: #EBF2FF/white.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     10. GIST UPDATE WORKFLOW
+══════════════════════════════════════════ -->
+<div class="section-label" id="s10">10 · How to Update Query Definitions</div>
+<div class="card">
+  <div class="card-header">
+    <div class="card-icon ci-teal">✏️</div>
+    <div>
+      <div class="card-title">Updating Query Definitions via Gist</div>
+      <div class="card-sub">No prompt redeploy needed — changes take effect on next session for all users</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="plain-english">
+      <div class="pe-label">💬 Plain English</div>
+      <p><strong>If you need to fix a query, add a new data point, or change how Voltron pulls ThoughtSpot data — you edit a file on GitHub. That's it.</strong> No IT ticket, no configuration change, no redeploy of the agent.</p>
+      <p>The two files most likely to need changes are:</p>
+      <ul>
+        <li><strong>ts_intent_map.py</strong> — this is where the actual query definitions live. Change this if you're adding a new type of data pull, fixing a field name, or changing which worksheet a query goes to.</li>
+        <li><strong>ts_runner.py</strong> — this is the underlying engine that fires queries and handles responses. Change this only if something structural about how ThoughtSpot responds has changed (rare).</li>
+      </ul>
+      <p>The process: open the Gist, click Edit, make your change, click Update. On their next session, every AE automatically gets the updated version — no one has to do anything on their end.</p>
+      <p><strong>One gotcha:</strong> GitHub's raw file URLs have a short-lived cache. After saving a Gist, the old version might appear for up to 5–10 minutes if you check the raw URL directly. The GitHub UI (the non-raw page) always shows the latest immediately. You can ask Voltron to verify by saying "check the gists."</p>
+    </div>
+
+    <div class="tech-specs">
+      <div class="tech-label">⚙️ Technical Detail</div>
+      <h4>Files and When to Update Them</h4>
+      <table class="dt">
+        <thead><tr><th>File</th><th>Gist</th><th>Update When</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ts_intent_map.py</strong></td><td><a href="https://gist.github.com/danielschutzman-stack/a743be0f38ba3366cd101b6ed9179bcd" style="color:#2E5CE5;">a743be0f...</a></td><td>Adding intents, fixing query syntax, changing worksheet routing, updating field names</td></tr>
+          <tr><td><strong>ts_runner.py</strong></td><td><a href="https://gist.github.com/danielschutzman-stack/5c20309f93f257aa997456fcbf38b92c" style="color:#2E5CE5;">5c20309f...</a></td><td>Changing API behavior, response parsing, timeout, error handling logic</td></tr>
+          <tr><td>bootstrap.py</td><td><code>70cfe88f...</code></td><td>Rarely — only if file assembly logic changes</td></tr>
+          <tr><td>subagent_templates.py</td><td><code>1c80cd01...</code></td><td>Adding new subagent types, updating research objectives</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Adding a New Intent</h4>
+      <div class="code"><code><span class="cm"># Add to INTENT_MAP in ts_intent_map.py</span>
+<span class="st">"your_intent_name"</span>: (
+    <span class="st">"revops"</span>,  <span class="cm"># primary worksheet</span>
+    <span class="st">"[Field1] [Field2] [Account Owner Name] = &#39;{owner_name}&#39;"</span>,
+    <span class="st">"studio"</span>,  <span class="cm"># fallback worksheet</span>
+    <span class="st">"[Field1] [Field2] [Account Owner Name] = &#39;{owner_name}&#39;"</span>,
+),
+
+<span class="cm"># Then call it from the agent:</span>
+<span class="fn">run_with_fallback</span>(<span class="st">"your_intent_name"</span>, owner_name=<span class="st">"Lee Corning"</span>)</code></div>
+
+      <h4>Query Template Rules</h4>
+      <ul>
+        <li>All column names: <code>[Column Name]</code> bracketed format — no exceptions</li>
+        <li>Filter syntax: <code>[Column Name] = &#39;value&#39;</code> — not unbracketed tokens</li>
+        <li>Max ~8 attribute fields per query on the 951-column RevOps worksheet</li>
+        <li>Avoid nested brackets: <code>[Account Status [For Calculation]]</code> causes parse errors</li>
+        <li>Always include a filter — open queries time out on large worksheets</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Voltron Beta — Technical Documentation &nbsp;·&nbsp; Current as of March 17, 2026 &nbsp;·&nbsp; ThoughtSpot Internal<br>
+  Reflects all updates from the March 16–17, 2026 engineering session with Lee Corning
+</div>
+
+</div>
+</body>
+</html>
