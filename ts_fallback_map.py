@@ -95,12 +95,12 @@ INTENT_MAP = {
         "revops",
         "[Account Name] [Opportunity Name] [Opportunity Gong Champion] [Opportunity Gong Economic Buyer] [Opportunity Gong Metrics] [Account Name] = '{account_name}'"
     ),
-    "activity_history": (
-        "revops",
-        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Activity Owner Role] [Activity Direction] [Account Name] = '{account_name}' last 180 days",
-        "revops",
-        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Account Name] = '{account_name}'"
-    ),
+  "activity_history": (
+    "revops",
+    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Activity Owner Role] [Activity Direction] [Account Name] = '{account_name}' last 180 days",
+    "revops",
+    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Account Name] = '{account_name}' last 90 days"
+),
     "sfdc_stakeholder": (
         "studio",
         "[Account Name] [Account Owner Name] [Account Owner Team] [Opportunity Name] [Opportunity Owner Name] [Opportunity CS Name] [Executive Business Sponsor [For Calculation]] [Opportunity Status] [Account Name] = '{account_name}'",
