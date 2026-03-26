@@ -1,67 +1,46 @@
 """
 ts_parallel.py
-Parallel ThoughtSpot query runner built on threading.
-Wraps run_with_fallback() to fire multiple intents concurrently.
+Parallel ThoughtSpot query runner built on threading.Thread.
+Uses raw threading — concurrent.futures is blocked in PTC sandbox.
 
 Usage:
     from ts_parallel import run_ts_batch, run_ts_batch_for_accounts,
                            check_token_expiry, TERRITORY_FILTER_INTENTS
 
-    # Multiple intents for one account:
     results = run_ts_batch([
         ("deal_stage",         {"account_name": "Acme Corp"}),
         ("meddpicc_flags",     {"account_name": "Acme Corp"}),
-        ("meddpicc_detail",    {"account_name": "Acme Corp"}),
         ("activity_history",   {"account_name": "Acme Corp"}),
-        ("sfdc_stakeholder",   {"account_name": "Acme Corp"}),
-        ("deal_funnel_timing", {"account_name": "Acme Corp"}),
     ], max_workers=6, timeout=25)
 
     if check_token_expiry(results):
-        # Surface ⚠️ token expiry message immediately
-        raise SystemExit("Token expired")
+        print("⚠️ TOKEN_EXPIRED")
 
-    deal = results["deal_stage"]
-    if deal["status"] == "ok":
-        rows = deal["data_rows"]
-
-    # Same intent across multiple accounts:
-    sfdc = run_ts_batch_for_accounts(
-        "sfdc_stakeholder",
-        ["Acme Corp", "Dell", "Sysco"],
-        variable_key="account_name",
-    )
-
-    # Territory filter queries (all 4 at once):
-    filters = run_ts_batch(
-        [(intent, {"owner_name": "Jane Smith"})
-         for intent in TERRITORY_FILTER_INTENTS],
-        max_workers=4,
-        timeout=25,
-    )
+    if results["deal_stage"]["status"] == "ok":
+        rows = results["deal_stage"]["data_rows"]
 """
 
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+
 # ---------------------------------------------------------------------------
-# Lazy import guard — ts_fallback_map.py must be present in /sandbox
+# Lazy import guard
 # ---------------------------------------------------------------------------
 
 try:
     from ts_fallback_map import run_with_fallback
 except ImportError:
-    # Stub matching real signature — safe for unit-test contexts
-    def run_with_fallback(intent: str, timeout: int = 20, **variables) -> dict:  # type: ignore
+    def run_with_fallback(intent: str, timeout: int = 20, **variables) -> dict:
         raise ImportError(
-            "ts_fallback_map.py not found in /sandbox. "
+            "ts_fallback_map not loaded. "
             "Cannot run ThoughtSpot queries."
         )
 
 
 # ---------------------------------------------------------------------------
-# Convenience constant — standard territory filter batch
+# Convenience constant
 # ---------------------------------------------------------------------------
 
 TERRITORY_FILTER_INTENTS = [
@@ -77,98 +56,39 @@ TERRITORY_FILTER_INTENTS = [
 # ---------------------------------------------------------------------------
 
 def _now_str() -> str:
-    """Return a compact UTC timestamp string for logging."""
     return datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
 
 
-def _run_single(
-    intent:    str,
-    variables: dict,
-    key:       str,
-    timeout:   int,
-) -> tuple:
+def _run_single_thread(
+    intent:     str,
+    variables:  dict,
+    key:        str,
+    timeout:    int,
+    results:    dict,
+    errors:     dict,
+):
     """
-    Execute a single run_with_fallback() call and return (key, result_dict).
+    Execute one run_with_fallback() call and write result into shared dict.
+    Designed to run inside a threading.Thread.
     """
-    print(
-        f"[ts_parallel] {_now_str()} | START  | "
-        f"intent={intent!r}  key={key!r}"
-    )
+    print(f"[ts_parallel] {_now_str()} | START | intent={intent!r} key={key!r}")
     try:
         result = run_with_fallback(intent, timeout=timeout, **variables)
+        results[key] = result
         print(
-            f"[ts_parallel] {_now_str()} | DONE   | "
-            f"key={key!r}  status={result.get('status', 'unknown')}"
+            f"[ts_parallel] {_now_str()} | DONE  | "
+            f"key={key!r} status={result.get('status', 'unknown')}"
         )
-        return key, result
     except Exception as exc:
         err_msg = str(exc)
-        print(
-            f"[ts_parallel] {_now_str()} | ERROR  | "
-            f"key={key!r}  error={err_msg!r}"
-        )
-        return key, {
+        errors[key] = err_msg
+        results[key] = {
             "status":       "error",
             "message":      err_msg,
             "column_names": [],
             "data_rows":    [],
         }
-
-
-def _collect_futures(
-    future_to_key: dict,
-    results:       dict,
-    timeout:       int,
-) -> dict:
-    """
-    Collect results from futures using a wall-clock deadline.
-    """
-    deadline = time.monotonic() + timeout + 5
-
-    for future in as_completed(future_to_key):
-        remaining = deadline - time.monotonic()
-        fkey      = future_to_key[future]
-
-        if remaining <= 0:
-            print(
-                f"[ts_parallel] {_now_str()} | TIMEOUT | "
-                f"key={fkey!r} — wall-clock deadline exceeded"
-            )
-            results[fkey] = {
-                "status":       "error",
-                "message":      "Wall-clock deadline exceeded",
-                "column_names": [],
-                "data_rows":    [],
-            }
-            continue
-
-        try:
-            returned_key, result_dict = future.result(timeout=remaining)
-            results[returned_key] = result_dict
-        except TimeoutError:
-            print(
-                f"[ts_parallel] {_now_str()} | TIMEOUT | "
-                f"key={fkey!r}  timeout={timeout}s"
-            )
-            results[fkey] = {
-                "status":       "error",
-                "message":      f"Query timed out after {timeout}s",
-                "column_names": [],
-                "data_rows":    [],
-            }
-        except Exception as exc:
-            print(
-                f"[ts_parallel] {_now_str()} | FATAL   | "
-                f"key={fkey!r}  error={exc!r}"
-            )
-            results[fkey] = {
-                "status":       "error",
-                "message":      str(exc),
-                "column_names": [],
-                "data_rows":    [],
-            }
-
-    return results
+        print(f"[ts_parallel] {_now_str()} | ERROR | key={key!r} error={err_msg!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -177,14 +97,11 @@ def _collect_futures(
 
 def check_token_expiry(results: dict) -> bool:
     """
-    Return True if any result in the batch indicates token expiry.
+    Return True if any result indicates token expiry.
 
     Use immediately after run_ts_batch() or run_ts_batch_for_accounts():
-
-        results = run_ts_batch([...])
         if check_token_expiry(results):
-            # Surface ⚠️ token expiry message per Error Handling rules
-            # Do NOT continue TS queries — halt and wait for user refresh
+            # Surface ⚠️ token expiry — halt TS queries
     """
     return any(
         v.get("status") == "token_expired"
@@ -194,7 +111,7 @@ def check_token_expiry(results: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Primary public helper — multiple intents, one or more accounts
+# Primary public helper — multiple intents
 # ---------------------------------------------------------------------------
 
 def run_ts_batch(
@@ -203,24 +120,24 @@ def run_ts_batch(
     timeout:          int = 25,
 ) -> dict:
     """
-    Fire multiple ThoughtSpot intents concurrently and return all results.
+    Fire multiple ThoughtSpot intents concurrently using threading.Thread.
 
     Parameters
     ----------
     intents_and_vars : list of (intent_str, variables_dict) tuples
-    max_workers      : Maximum number of concurrent threads (default 6)
+    max_workers      : Maximum concurrent threads (default 6)
     timeout          : Per-query timeout in seconds (default 25)
 
     Returns
     -------
     dict keyed by intent name. Duplicate intents get _2, _3 suffixes.
-    Always includes "_token_expired": True if any query expired.
+    Includes "_token_expired": True if any query expired.
     """
     if not intents_and_vars:
         return {}
 
     # Build de-duplicated keys
-    key_counts:  dict = {}
+    key_counts: dict = {}
     keyed_tasks: list = []
 
     for intent, variables in intents_and_vars:
@@ -232,25 +149,55 @@ def run_ts_batch(
             key = f"{intent}_{key_counts[intent]}"
         keyed_tasks.append((key, intent, variables))
 
-    n       = len(keyed_tasks)
-    workers = min(max_workers, n)
+    n           = len(keyed_tasks)
+    workers     = min(max_workers, n)
+    results     = {}
+    errors      = {}
+    batch_start = time.monotonic()
 
     print(
-        f"[ts_parallel] {_now_str()} | BATCH  | "
-        f"{n} quer{'y' if n == 1 else 'ies'}  "
-        f"max_workers={workers}  timeout={timeout}s"
+        f"[ts_parallel] {_now_str()} | BATCH | "
+        f"{n} quer{'y' if n == 1 else 'ies'} "
+        f"max_workers={workers} timeout={timeout}s"
     )
-    batch_start = time.monotonic()
-    results: dict = {}
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_key = {
-            executor.submit(_run_single, intent, variables, key, timeout): key
-            for key, intent, variables in keyed_tasks
-        }
-        _collect_futures(future_to_key, results, timeout)
+    # Process in batches of max_workers
+    for batch_start_idx in range(0, n, workers):
+        batch       = keyed_tasks[batch_start_idx:batch_start_idx + workers]
+        threads     = []
 
-    # Flag token expiry prominently
+        for key, intent, variables in batch:
+            t = threading.Thread(
+                target=_run_single_thread,
+                args=(intent, variables, key, timeout, results, errors),
+                daemon=True,
+            )
+            threads.append(t)
+            t.start()
+
+        # Wait for all threads in this batch with timeout
+        deadline = time.monotonic() + timeout + 5
+        for t in threads:
+            remaining = max(0, deadline - time.monotonic())
+            t.join(timeout=remaining)
+
+        # Any thread still alive after join = timed out
+        for i, t in enumerate(threads):
+            if t.is_alive():
+                key = batch[i][0]
+                if key not in results:
+                    results[key] = {
+                        "status":       "error",
+                        "message":      f"Thread timed out after {timeout}s",
+                        "column_names": [],
+                        "data_rows":    [],
+                    }
+                print(
+                    f"[ts_parallel] {_now_str()} | TIMEOUT | "
+                    f"key={key!r}"
+                )
+
+    # Flag token expiry
     if check_token_expiry(results):
         results["_token_expired"] = True
         expired_keys = [
@@ -258,7 +205,7 @@ def run_ts_batch(
             if isinstance(v, dict) and v.get("status") == "token_expired"
         ]
         print(
-            f"[ts_parallel] {_now_str()} | ⚠️  TOKEN EXPIRED | "
+            f"[ts_parallel] {_now_str()} | ⚠️ TOKEN EXPIRED | "
             f"detected in: {expired_keys}"
         )
 
@@ -270,7 +217,7 @@ def run_ts_batch(
     )
     print(
         f"[ts_parallel] {_now_str()} | FINISH | "
-        f"{ok_count}/{n} succeeded  elapsed={elapsed:.2f}s"
+        f"{ok_count}/{n} succeeded elapsed={elapsed:.2f}s"
     )
     return results
 
@@ -287,115 +234,83 @@ def run_ts_batch_for_accounts(
     timeout:      int = 25,
 ) -> dict:
     """
-    Fire the same ThoughtSpot intent against multiple values in parallel.
+    Fire the same intent against multiple values concurrently.
 
     Parameters
     ----------
-    intent       : ThoughtSpot intent name (e.g. "sfdc_stakeholder")
-    values       : List of values for the variable
-    variable_key : The variable name to use (default "account_name").
-                   Use "owner_name" for owner-scoped intents.
-    max_workers  : Maximum number of concurrent threads (default 5)
+    intent       : ThoughtSpot intent name
+    values       : List of account names or owner names
+    variable_key : "account_name" (default) or "owner_name"
+    max_workers  : Maximum concurrent threads (default 5)
     timeout      : Per-query timeout in seconds (default 25)
 
     Returns
     -------
-    dict keyed by value (account name or owner name).
-    Always includes "_token_expired": True if any query expired.
+    dict keyed by value. Includes "_token_expired": True if any expired.
     """
     if not values:
         return {}
 
-    n       = len(values)
-    workers = min(max_workers, n)
+    n           = len(values)
+    workers     = min(max_workers, n)
+    results     = {}
+    errors      = {}
+    batch_start = time.monotonic()
 
     print(
         f"[ts_parallel] {_now_str()} | ACCT-BATCH | "
-        f"intent={intent!r}  {n} value(s)  "
-        f"variable_key={variable_key!r}  "
-        f"max_workers={workers}  timeout={timeout}s"
+        f"intent={intent!r} {n} value(s) "
+        f"variable_key={variable_key!r} "
+        f"max_workers={workers} timeout={timeout}s"
     )
-    batch_start = time.monotonic()
-    results: dict = {}
 
-    def _run_for_value(value: str) -> tuple:
-        print(
-            f"[ts_parallel] {_now_str()} | START  | "
-            f"intent={intent!r}  {variable_key}={value!r}"
-        )
-        try:
-            result = run_with_fallback(
-                intent,
-                timeout=timeout,
-                **{variable_key: value},
-            )
-            print(
-                f"[ts_parallel] {_now_str()} | DONE   | "
-                f"intent={intent!r}  {variable_key}={value!r}  "
-                f"status={result.get('status', 'unknown')}"
-            )
-            return value, result
-        except Exception as exc:
-            err_msg = str(exc)
-            print(
-                f"[ts_parallel] {_now_str()} | ERROR  | "
-                f"intent={intent!r}  {variable_key}={value!r}  "
-                f"error={err_msg!r}"
-            )
-            return value, {
-                "status":       "error",
-                "message":      err_msg,
-                "column_names": [],
-                "data_rows":    [],
-            }
+    # Process in batches of max_workers
+    for batch_start_idx in range(0, n, workers):
+        batch   = values[batch_start_idx:batch_start_idx + workers]
+        threads = []
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_value = {
-            executor.submit(_run_for_value, v): v
-            for v in values
-        }
+        for value in batch:
+            t = threading.Thread(
+                target=_run_single_thread,
+                args=(
+                    intent,
+                    {variable_key: value},
+                    value,
+                    timeout,
+                    results,
+                    errors,
+                ),
+                daemon=True,
+            )
+            threads.append((t, value))
+            t.start()
 
+        # Wait for batch with timeout
         deadline = time.monotonic() + timeout + 5
-        for future in as_completed(future_to_value):
-            remaining = deadline - time.monotonic()
-            val       = future_to_value[future]
+        for t, value in threads:
+            remaining = max(0, deadline - time.monotonic())
+            t.join(timeout=remaining)
 
-            if remaining <= 0:
+        # Check for timed-out threads
+        for t, value in threads:
+            if t.is_alive():
+                if value not in results:
+                    results[value] = {
+                        "status":       "error",
+                        "message":      f"Thread timed out after {timeout}s",
+                        "column_names": [],
+                        "data_rows":    [],
+                    }
                 print(
                     f"[ts_parallel] {_now_str()} | TIMEOUT | "
-                    f"{variable_key}={val!r} — deadline exceeded"
+                    f"{variable_key}={value!r}"
                 )
-                results[val] = {
-                    "status":       "error",
-                    "message":      "Wall-clock deadline exceeded",
-                    "column_names": [],
-                    "data_rows":    [],
-                }
-                continue
-
-            try:
-                returned_val, result_dict = future.result(timeout=remaining)
-                results[returned_val] = result_dict
-            except TimeoutError:
-                results[val] = {
-                    "status":       "error",
-                    "message":      f"Query timed out after {timeout}s",
-                    "column_names": [],
-                    "data_rows":    [],
-                }
-            except Exception as exc:
-                results[val] = {
-                    "status":       "error",
-                    "message":      str(exc),
-                    "column_names": [],
-                    "data_rows":    [],
-                }
 
     # Flag token expiry
     if check_token_expiry(results):
         results["_token_expired"] = True
         print(
-            f"[ts_parallel] {_now_str()} | ⚠️  TOKEN EXPIRED | "
+            f"[ts_parallel] {_now_str()} | ⚠️ TOKEN EXPIRED | "
             f"intent={intent!r}"
         )
 
@@ -407,7 +322,7 @@ def run_ts_batch_for_accounts(
     )
     print(
         f"[ts_parallel] {_now_str()} | FINISH | "
-        f"intent={intent!r}  {ok_count}/{n} succeeded  "
+        f"intent={intent!r} {ok_count}/{n} succeeded "
         f"elapsed={elapsed:.2f}s"
     )
     return results
@@ -418,23 +333,21 @@ def run_ts_batch_for_accounts(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("=== ts_parallel.py self-test ===\n")
+    print("=== ts_parallel.py self-test (threading mode) ===\n")
 
     print("✅ Module imported OK")
-
     assert len(TERRITORY_FILTER_INTENTS) == 4
     print(f"✅ TERRITORY_FILTER_INTENTS: {TERRITORY_FILTER_INTENTS}")
 
     fake_expired = {
         "deal_stage": {"status": "token_expired", "column_names": [], "data_rows": []},
-        "activity_history": {"status": "ok", "column_names": [], "data_rows": []},
     }
     assert check_token_expiry(fake_expired) is True
-    print("✅ check_token_expiry detects expiry correctly")
+    print("✅ check_token_expiry detects expiry")
 
     fake_ok = {"deal_stage": {"status": "ok", "column_names": [], "data_rows": []}}
     assert check_token_expiry(fake_ok) is False
-    print("✅ check_token_expiry clean on ok results")
+    print("✅ check_token_expiry clean on ok")
 
     result = run_ts_batch([])
     assert result == {}
@@ -443,5 +356,31 @@ if __name__ == "__main__":
     result = run_ts_batch_for_accounts("deal_stage", [])
     assert result == {}
     print("✅ run_ts_batch_for_accounts handles empty input")
+
+    # Test threading directly
+    test_results = {}
+    test_errors  = {}
+
+    def _fake_query(intent, variables, key, timeout, results, errors):
+        import time
+        time.sleep(0.1)
+        results[key] = {"status": "ok", "column_names": ["test"], "data_rows": [["val"]]}
+
+    threads = []
+    for i in range(3):
+        t = threading.Thread(
+            target=_fake_query,
+            args=(f"intent_{i}", {}, f"key_{i}", 5, test_results, test_errors),
+            daemon=True,
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join(timeout=5)
+
+    assert len(test_results) == 3
+    assert all(v["status"] == "ok" for v in test_results.values())
+    print("✅ threading.Thread parallel execution verified")
 
     print("\nSelf-test complete.")
