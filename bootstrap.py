@@ -1,58 +1,98 @@
 """
 bootstrap.py
-In-memory module loader for PTC sandbox environments.
+File-writer for PG workflow helper modules.
 
-PTC sandbox blocks os module file writes and pathlib mutations.
-This version loads all helper modules directly into Python's
-module registry without touching the filesystem.
+Writes helper files to /sandbox/ from fetched source strings.
+Includes markdown escape sanitizer for web_fetch content artifacts.
+Includes re_bootstrap() for mid-session recovery when platform clears files.
 
 Usage:
-    from bootstrap import bootstrap, warm_account_cache
+    from bootstrap import bootstrap, re_bootstrap, warm_account_cache
 
+    # Initial boot:
     results = bootstrap(
-        fallback_src=<ts_fallback_map.py content>,
-        tmpl_src=<subagent_templates.py content>,
-        vd_src=<value_drivers.py content>,
-        report_builder_src=<pg_report_builder.py content>,
-        territory_xls_src=<territory_xls.py content>,
-        parallel_src=<ts_parallel.py content>,
+        fallback_src=..., tmpl_src=..., vd_src=...,
+        report_builder_src=..., territory_xls_src=..., parallel_src=...
     )
 
-    # After posting "✅ Ready!", call warm_account_cache() — never before:
-    from bootstrap import warm_account_cache
-    warm_account_cache(owner_name)
+    # Mid-session recovery (if platform clears /sandbox/ files):
+    re_bootstrap()  # re-fetches and rewrites all files from GitHub
 """
 
-import importlib
-import importlib.util
-import types
+from pathlib import Path
+
+MIN_BYTES = 500
+SANDBOX   = Path("/sandbox")
+
+# GitHub raw URLs — used by re_bootstrap() for mid-session recovery
+_GITHUB_BASE = "https://raw.githubusercontent.com/danielschutzman-stack/voltron/main"
+_MODULE_URLS = {
+    "ts_fallback_map":    f"{_GITHUB_BASE}/ts_fallback_map.py",
+    "subagent_templates": f"{_GITHUB_BASE}/subagent_templates.py",
+    "value_drivers":      f"{_GITHUB_BASE}/value_drivers.py",
+    "pg_report_builder":  f"{_GITHUB_BASE}/pg_report_builder.py",
+    "territory_xls":      f"{_GITHUB_BASE}/territory_xls.py",
+    "ts_parallel":        f"{_GITHUB_BASE}/ts_parallel.py",
+}
 
 
 # ---------------------------------------------------------------------------
-# Internal: load a source string as a named module
+# Markdown escape sanitizer
+# Strips artifacts from web_fetch content rendering
 # ---------------------------------------------------------------------------
 
-def _load_module(module_name: str, source: str) -> tuple:
+def _sanitize(source: str) -> str:
     """
-    Compile and execute a source string as a named Python module.
-    Registers it in sys.modules so it can be imported normally afterward.
+    Strip markdown escape sequences from fetched source code.
+    web_fetch sometimes returns \\_ instead of _, \\[ instead of [, etc.
+    """
+    if not source:
+        return source
+    for escaped, clean in [
+        ("\\_", "_"), ("\\[", "["), ("\\]", "]"),
+        ("\\#", "#"), ("\\*", "*"), ("\\`", "`"),
+        ("\\-", "-"), ("\\.", "."), ("\\(", "("),
+        ("\\)", ")"), ("\\{", "{"), ("\\}", "}"),
+        ("\\|", "|"), ("\\>", ">"), ("\\!", "!"),
+    ]:
+        source = source.replace(escaped, clean)
+    return source
 
-    Returns (module, None) on success, (None, error_message) on failure.
-    """
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _should_skip(path: Path) -> bool:
     try:
-        import sys
-        module      = types.ModuleType(module_name)
-        module.__name__ = module_name
-        code        = compile(source, f"<{module_name}>", "exec")
-        exec(code, module.__dict__)
-        sys.modules[module_name] = module
-        return module, None
-    except Exception as exc:
-        return None, str(exc)
+        return path.exists() and path.stat().st_size >= MIN_BYTES
+    except Exception:
+        return False
+
+
+def _write(path: Path, content: str) -> str:
+    path.write_text(_sanitize(content), encoding="utf-8")
+    return "written"
+
+
+def _files_present() -> bool:
+    """Return True if all required helper files exist and are valid."""
+    required = [
+        SANDBOX / "ts_fallback_map.py",
+        SANDBOX / "subagent_templates.py",
+        SANDBOX / "value_drivers.py",
+        SANDBOX / "pg_report_builder.py",
+        SANDBOX / "territory_xls.py",
+        SANDBOX / "ts_parallel.py",
+    ]
+    return all(
+        p.exists() and p.stat().st_size >= MIN_BYTES
+        for p in required
+    )
 
 
 # ---------------------------------------------------------------------------
-# Primary bootstrap entry point
+# Primary bootstrap — called at session start with pre-fetched sources
 # ---------------------------------------------------------------------------
 
 def bootstrap(
@@ -64,95 +104,101 @@ def bootstrap(
     parallel_src:       str = "",
 ) -> dict:
     """
-    Load all required helper modules into memory.
+    Write all required sandbox helper files from pre-fetched source strings.
 
-    No file writes. No filesystem access. Modules are registered in
-    sys.modules and can be imported normally after bootstrap() runs:
-
-        from ts_fallback_map import run_with_fallback
-        from value_drivers import match_drivers
-        from subagent_templates import render
-        from pg_report_builder import build_pg_report, build_onepager
-        from territory_xls import TerritoryWorkbook
-        from ts_parallel import run_ts_batch
-
-    Parameters
-    ----------
-    fallback_src        : Full source of ts_fallback_map.py
-    tmpl_src            : Full source of subagent_templates.py
-    vd_src              : Full source of value_drivers.py
-    report_builder_src  : Full source of pg_report_builder.py
-    territory_xls_src   : Full source of territory_xls.py
-    parallel_src        : Full source of ts_parallel.py (optional)
-
-    Returns
-    -------
-    dict mapping module_name → status string:
-        "loaded"                   — module loaded into memory successfully
-        "skipped (already loaded)" — module already in sys.modules
-        "error: source too small"  — source content failed minimum size check
-        "error: <message>"         — load failed
+    Returns dict mapping filepath → status string:
+        "written"  — file newly written
+        "skipped"  — file already exists and is valid
+        "error: …" — write failed or source too small
     """
-    import sys
-    MIN_BYTES = 500
+    SANDBOX.mkdir(parents=True, exist_ok=True)
 
     sources = {
-        "ts_fallback_map":    fallback_src,
-        "subagent_templates": tmpl_src,
-        "value_drivers":      vd_src,
-        "pg_report_builder":  report_builder_src,
-        "territory_xls":      territory_xls_src,
+        SANDBOX / "ts_fallback_map.py":    fallback_src,
+        SANDBOX / "subagent_templates.py": tmpl_src,
+        SANDBOX / "value_drivers.py":      vd_src,
+        SANDBOX / "pg_report_builder.py":  report_builder_src,
+        SANDBOX / "territory_xls.py":      territory_xls_src,
     }
 
-    if parallel_src and len(parallel_src.strip()) >= MIN_BYTES:
-        sources["ts_parallel"] = parallel_src
+    if parallel_src and len(_sanitize(parallel_src).strip()) >= MIN_BYTES:
+        sources[SANDBOX / "ts_parallel.py"] = parallel_src
 
     results = {}
-
-    for module_name, src in sources.items():
-
-        # Validate source
+    for path, src in sources.items():
+        path_str = str(path)
+        src      = _sanitize(src) if src else src
         if not src or len(src.strip()) < MIN_BYTES:
-            results[module_name] = "error: source too small or empty"
+            results[path_str] = "error: source too small or empty"
             continue
-
-        # Check if already loaded
-        if module_name in sys.modules:
-            results[module_name] = "skipped (already loaded)"
-            continue
-
-        # Load into memory
-        module, err = _load_module(module_name, src)
-        if err:
-            results[module_name] = f"error: {err}"
-        else:
-            results[module_name] = "loaded"
+        try:
+            if _should_skip(path):
+                results[path_str] = "skipped"
+            else:
+                results[path_str] = _write(path, src)
+        except Exception as exc:
+            results[path_str] = f"error: {exc}"
 
     return results
 
 
 # ---------------------------------------------------------------------------
-# Account cache warm-up — call AFTER "✅ Ready!", never inside bootstrap()
+# Mid-session recovery — re-fetches and rewrites all files from GitHub
+# ---------------------------------------------------------------------------
+
+def re_bootstrap() -> dict:
+    """
+    Re-fetch and rewrite all helper files from GitHub.
+
+    Call this when the platform clears /sandbox/ files mid-session:
+
+        from bootstrap import re_bootstrap, _files_present
+        if not _files_present():
+            print("⚠️ Sandbox files cleared — re-bootstrapping...")
+            results = re_bootstrap()
+            print(results)
+
+    Returns dict mapping module_name → status string.
+    """
+    try:
+        import urllib.request
+    except ImportError:
+        return {"error": "urllib not available — cannot re-fetch files"}
+
+    SANDBOX.mkdir(parents=True, exist_ok=True)
+    results = {}
+
+    for module_name, url in _MODULE_URLS.items():
+        path = SANDBOX / f"{module_name}.py"
+        try:
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                src = resp.read().decode("utf-8")
+            src = _sanitize(src)
+            if len(src.strip()) < MIN_BYTES:
+                results[module_name] = "error: fetched source too small"
+                continue
+            path.write_text(src, encoding="utf-8")
+            results[module_name] = "re-written"
+        except Exception as exc:
+            results[module_name] = f"error: {exc}"
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Account cache warm-up
 # ---------------------------------------------------------------------------
 
 def warm_account_cache(owner_name: str) -> dict:
     """
-    Pre-warm the account cache for the current user.
-
-    Delegates to ts_fallback_map.warm_account_cache().
-    Call this AFTER posting "✅ Ready!" — never before.
-
-    NOTE: In PTC sandbox, cache is held in memory only for this session.
-    It cannot be persisted to disk between sessions.
+    Pre-warm the account cache. Call AFTER "✅ Ready!" — never before.
     """
     if not owner_name or not owner_name.strip():
         return {"status": "skipped", "message": "No owner_name provided."}
-
     try:
         from ts_fallback_map import warm_account_cache as _warm
         cache_result = _warm(owner_name.strip())
         status       = cache_result.get("status", "unknown")
-
         return {
             "status": status,
             "message": (
@@ -165,13 +211,6 @@ def warm_account_cache(owner_name: str) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-# ---------------------------------------------------------------------------
-# Self-test
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    print(
-        "bootstrap.py loaded OK (in-memory mode).\n"
-        "Call bootstrap(fallback_src, tmpl_src, vd_src, "
-        "report_builder_src, territory_xls_src) to initialize."
-    )
+    print("bootstrap.py loaded OK.")
+    print(f"Files present: {_files_present()}")
