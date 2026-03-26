@@ -73,10 +73,11 @@ INTENT_MAP = {
         "[Account Name] [Opportunity Name] [Opportunity Gong Champion] account name = '{account_name}'"
     ),
     "activity_history": (
-        "revops",
-        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] account name = '{account_name}'",
-        "revops",
-        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] account name = '{account_name}'"
+    "revops",
+    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Activity Owner Role] [Activity Direction] [Account Name] = '{account_name}' last 180 days",
+    "revops",
+    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Account Name] = '{account_name}' last 90 days",
+),
     ),
     "sfdc_stakeholder": (
         "studio",
