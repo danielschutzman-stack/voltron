@@ -138,10 +138,10 @@ def _ts_query(query_string: str, worksheet_key: str, timeout: int = 20) -> dict:
     }
     payload = {
         "query_string":             query_string,
-        "logical_table_id": worksheet_id,
+        "logical_table_identifier": worksheet_id,
         "data_format":              "COMPACT",
         "record_offset":            0,
-        "record_size":              1000,
+        "record_size":              500,
     }
 
     try:
