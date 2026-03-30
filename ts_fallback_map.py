@@ -95,12 +95,12 @@ INTENT_MAP = {
         "revops",
         "[Account Name] [Opportunity Name] [Opportunity Gong Champion] [Opportunity Gong Economic Buyer] [Opportunity Gong Metrics] [Account Name] = '{account_name}'"
     ),
-  "activity_history": (
-    "revops",
-    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Activity Owner Role] [Activity Direction] [Account Name] = '{account_name}' last 180 days",
-    "revops",
-    "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Account Name] = '{account_name}' last 90 days"
-),
+    "activity_history": (
+        "revops",
+        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Activity Owner Role] [Activity Direction] [Account Name] = '{account_name}' last 180 days",
+        "revops",
+        "[Account Name] [Activity Type] [Activity Subject] [Activity Time] [Activity Owner Name] [Account Name] = '{account_name}' last 90 days"
+    ),
     "sfdc_stakeholder": (
         "studio",
         "[Account Name] [Account Owner Name] [Account Owner Team] [Opportunity Name] [Opportunity Owner Name] [Opportunity CS Name] [Executive Business Sponsor [For Calculation]] [Opportunity Status] [Account Name] = '{account_name}'",
@@ -362,7 +362,7 @@ def run_with_fallback(intent: str, timeout: int = 20, **variables) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Account pre-load cache — in-memory only (PTC sandbox blocks file writes)
+# Account pre-load cache — in-memory only
 # ---------------------------------------------------------------------------
 
 _CACHE_TTL_SECONDS = 1800  # 30 minutes
@@ -375,15 +375,13 @@ def warm_account_cache(owner_name: str) -> dict:
 
     Call this AFTER posting "✅ Ready!" — never block session startup on it.
 
-    NOTE: In PTC sandbox, cache is held in memory only.
-    It does not persist across sessions or page refreshes.
+    NOTE: Cache is held in memory only — does not persist across sessions.
     """
     if not owner_name or not owner_name.strip():
         return {"status": "skipped", "message": "No owner_name provided."}
 
     owner_name = owner_name.strip()
 
-    # Return fresh cache if available
     cached = _ACCOUNT_CACHE.get(owner_name)
     if cached:
         age = time.time() - cached.get("_cached_at", 0)
@@ -397,7 +395,6 @@ def warm_account_cache(owner_name: str) -> dict:
 
     result["_cached_at"]  = time.time()
     result["_owner_name"] = owner_name
-
     _ACCOUNT_CACHE[owner_name] = result
     return result
 
@@ -407,12 +404,12 @@ def read_account_cache(owner_name: str):
     Return cached account_ownership result if < 30 minutes old.
     Returns None if missing or expired.
 
-    Use this in Territory Flow Step 1 before calling run_with_fallback():
+    Use in Territory Flow Step 1 before calling run_with_fallback():
         cached = read_account_cache(owner_name)
         if cached and cached.get("status") == "ok":
-            # Use cached data — skip API call
+            account_data = cached
         else:
-            result = run_with_fallback("account_ownership", owner_name=owner_name)
+            account_data = run_with_fallback("account_ownership", owner_name=owner_name)
     """
     if not owner_name or not owner_name.strip():
         return None
