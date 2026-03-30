@@ -7,7 +7,22 @@ Includes content-aware skip logic — never skips based on size alone.
 Includes markdown escape sanitizer for web_search content artifacts.
 
 NOTE: Does not use sys or __import__ — both blocked by sandbox validator.
-Imports are direct named imports only.
+NOTE: Does not sanitize \\{ or \\} — breaks Python f-strings in pg_report_builder.
+
+Usage:
+    from bootstrap import bootstrap, sanitize, warm_account_cache
+
+    results = bootstrap(
+        fallback_src=sanitize(<ts_fallback_map.py content>),
+        tmpl_src=sanitize(<subagent_templates.py content>),
+        vd_src=sanitize(<value_drivers.py content>),
+        report_builder_src=sanitize(<pg_report_builder.py content>),
+        territory_xls_src=sanitize(<territory_xls.py content>),
+        parallel_src=sanitize(<ts_parallel.py content>),
+    )
+
+    from bootstrap import warm_account_cache
+    warm_account_cache(owner_name)
 """
 
 from pathlib import Path
@@ -23,13 +38,17 @@ SANDBOX   = Path("/sandbox")
 def sanitize(source: str) -> str:
     """
     Strip markdown escape sequences introduced by web_search content rendering.
-    Call on every fetched source string before passing to bootstrap().
+
+    NOTE: \\{ and \\} are intentionally excluded — replacing them breaks
+    Python f-strings (e.g. in pg_report_builder._CSS which uses {{ and }}).
+    These characters do not need sanitizing in valid Python source.
+
     Double-sanitizing is safe — idempotent.
     """
     if not source:
         return source
     replacements = [
-        ("\\ ",  " "),
+        ("\\ ",  " "),   # backslash-space — broken line continuation
         ("\\_",  "_"),
         ("\\[",  "["),
         ("\\]",  "]"),
@@ -40,8 +59,8 @@ def sanitize(source: str) -> str:
         ("\\.",  "."),
         ("\\(",  "("),
         ("\\)",  ")"),
-        ("\\{",  "{"),
-        ("\\}",  "}"),
+        # ("\\{",  "{"),  ← excluded — breaks Python f-strings
+        # ("\\}",  "}"),  ← excluded — breaks Python f-strings
         ("\\|",  "|"),
         ("\\>",  ">"),
         ("\\!",  "!"),
@@ -253,11 +272,16 @@ if __name__ == "__main__":
     assert "\\ " not in sanitize("foo\\ bar")
     print("✅ sanitize() backslash-space")
 
-    # 3. Sanitizer idempotent
+    # 3. Sanitizer — braces preserved (f-string safety)
+    fstring = "style = f\"color: {NAVY}; background: {{white}}\""
+    assert sanitize(fstring) == fstring, "Sanitizer must not modify braces"
+    print("✅ sanitize() braces preserved")
+
+    # 4. Sanitizer idempotent
     assert sanitize(clean) == clean
     print("✅ sanitize() idempotent")
 
-    # 4. _should_skip matching content
+    # 5. _should_skip matching content
     import tempfile, os
     content = "def hello(): pass\n" * 40
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -266,15 +290,15 @@ if __name__ == "__main__":
     assert _should_skip(tmp, content)
     print("✅ _should_skip() matching content")
 
-    # 5. _should_skip different content
+    # 6. _should_skip different content
     assert not _should_skip(tmp, "def world(): pass\n" * 40)
     print("✅ _should_skip() different content")
 
-    # 6. _should_skip placeholder
+    # 7. _should_skip placeholder
     assert not _should_skip(tmp, "# placeholder\n" * 40)
     print("✅ _should_skip() rejects placeholder")
 
-    # 7. _should_skip missing file
+    # 8. _should_skip missing file
     assert not _should_skip(Path("/tmp/nonexistent_xyz.py"), content)
     print("✅ _should_skip() missing file")
 
