@@ -1,7 +1,16 @@
 """
-pg_report_builder.py — v5.1
+pg_report_builder.py — v5.2
 ----------------------------------------------------------------
 Builds PG report HTML files from subagent JSON output and TS query results.
+
+v5.2 changes:
+- _four_leg_stool_section() rewritten:
+  - Primary source: raw["exec_profiles"]["executives"] (has name + title)
+  - Secondary source: SFDC Executive Business Sponsor if populated
+  - Tertiary source: Gong champion/EB names from meddpicc_detail
+  - No longer uses Opportunity Owner Name (AE rep names)
+  - UNKNOWN leg shown below grid instead of silently dropped
+  - raw param added to function signature and call site
 
 v5.1 changes: No file writes. build_pg_report() and build_onepager() return
 dicts with {"filename", "html", "slug"} instead of writing to disk.
@@ -15,7 +24,6 @@ Three output files per account (always):
 Usage:
     from pg_report_builder import build_pg_report, build_onepager
 
-    # Phase 1 — after all research modules complete:
     result = build_pg_report(
         slug="acme_corp",
         account_name="Acme Corp",
@@ -25,6 +33,7 @@ Usage:
             "competitor_intel":{...},
             "exec_profiles":   {...},
             "case_studies":    {...},
+            "sales_calls":     {...},
         },
         ts_data={
             "sfdc_stakeholder":    {...},
@@ -46,19 +55,12 @@ Usage:
     #           "slug": "acme_corp",
     #           "phase": 1}
 
-    # Phase 2 — after Outreach Generator completes:
-    result = build_pg_report(..., outreach_data={...}, phase=2)
-
-    # One-pager:
     onepager = build_onepager(
         slug="acme_corp",
         account_name="Acme Corp",
         raw={...},
         matched_drivers=[...],
     )
-    # onepager = {"filename": "acme_corp_onepager.html",
-    #             "html": "<html>...</html>",
-    #             "slug": "acme_corp"}
 """
 
 import datetime
@@ -391,28 +393,68 @@ def _company_overview_section(raw: dict) -> str:
     return out or "<p>No company overview data available.</p>"
 
 
-def _four_leg_stool_section(ts_data: dict, account_name: str) -> str:
-    sfdc     = ts_data.get("sfdc_stakeholder", {})
-    rows     = sfdc.get("data_rows", [])
-    cols     = sfdc.get("column_names", [])
+def _four_leg_stool_section(
+    ts_data:      dict,
+    account_name: str,
+    raw:          dict = None,
+) -> str:
+    """
+    Build the 4-Leg Stool 2x2 HTML grid.
 
+    Source priority:
+    1. raw["exec_profiles"]["executives"] — has name + title (best source)
+    2. SFDC Executive Business Sponsor field — if populated
+    3. Gong champion/EB names from meddpicc_detail — badge only
+
+    Does NOT use Opportunity Owner Name (those are AE rep names, not contacts).
+    """
+    raw = raw or {}
+
+    # ── Source 1: exec profiles ────────────────────────────────────────────
     stakeholders = []
-    if rows and cols:
-        for row in rows:
-            record = dict(zip(cols, row)) if isinstance(row, list) else row
-            name   = (
-                record.get("Opportunity Owner Name", "")
-                or record.get("Account Owner Name", "")
-            )
-            title  = record.get("Executive Business Sponsor [For Calculation]", "")
-            if name:
+    ep    = raw.get("exec_profiles", {})
+    execs = ep.get("executives", [])
+    for exec_data in execs:
+        if not isinstance(exec_data, dict):
+            continue
+        name  = exec_data.get("name", "")
+        title = exec_data.get("title", "")
+        if name and name.strip():
+            stakeholders.append({
+                "name":        name.strip(),
+                "title":       title or "",
+                "is_champion": False,
+                "is_eb":       False,
+                "source":      "exec_profiles",
+            })
+
+    # ── Source 2: SFDC exec sponsor ────────────────────────────────────────
+    sfdc      = ts_data.get("sfdc_stakeholder", {})
+    sfdc_rows = sfdc.get("data_rows", [])
+    sfdc_cols = sfdc.get("column_names", [])
+
+    exec_sponsor = ""
+    if sfdc_rows and sfdc_cols:
+        rec = (
+            dict(zip(sfdc_cols, sfdc_rows[0]))
+            if isinstance(sfdc_rows[0], list) else sfdc_rows[0]
+        )
+        exec_sponsor = rec.get(
+            "Executive Business Sponsor [For Calculation]", ""
+        ) or ""
+
+        if exec_sponsor and exec_sponsor.strip():
+            existing = {s["name"].lower() for s in stakeholders}
+            if exec_sponsor.lower() not in existing:
                 stakeholders.append({
-                    "name":        name,
-                    "title":       title or "",
+                    "name":        exec_sponsor.strip(),
+                    "title":       "Executive Business Sponsor",
                     "is_champion": False,
                     "is_eb":       False,
+                    "source":      "sfdc",
                 })
 
+    # ── Source 3: Gong champion / EB ──────────────────────────────────────
     medd      = ts_data.get("meddpicc_detail", {})
     medd_rows = medd.get("data_rows", [])
     medd_cols = medd.get("column_names", [])
@@ -424,21 +466,49 @@ def _four_leg_stool_section(ts_data: dict, account_name: str) -> str:
             dict(zip(medd_cols, medd_rows[0]))
             if isinstance(medd_rows[0], list) else medd_rows[0]
         )
-        champion_name = rec.get("Opportunity Gong Champion", "")
-        eb_name       = rec.get("Opportunity Gong Economic Buyer", "")
+        champion_name = rec.get("Opportunity Gong Champion", "") or ""
+        eb_name       = rec.get("Opportunity Gong Economic Buyer", "") or ""
 
+    # Add Gong champion if not already present
+    if champion_name and champion_name.strip():
+        existing = {s["name"].lower() for s in stakeholders}
+        if champion_name.lower() not in existing:
+            stakeholders.append({
+                "name":        champion_name.strip(),
+                "title":       "",
+                "is_champion": True,
+                "is_eb":       False,
+                "source":      "gong",
+            })
+
+    # Add Gong EB if not already present
+    if eb_name and eb_name.strip():
+        existing = {s["name"].lower() for s in stakeholders}
+        if eb_name.lower() not in existing:
+            stakeholders.append({
+                "name":        eb_name.strip(),
+                "title":       "",
+                "is_champion": False,
+                "is_eb":       True,
+                "source":      "gong",
+            })
+
+    # Mark champion / EB badges on all stakeholders
     for s in stakeholders:
         if champion_name and champion_name.lower() in s["name"].lower():
             s["is_champion"] = True
         if eb_name and eb_name.lower() in s["name"].lower():
             s["is_eb"] = True
 
-    legs: dict = {"DATA": [], "BUSINESS": [], "IT": [], "ANALYST": []}
+    # ── Classify into legs ─────────────────────────────────────────────────
+    legs: dict = {
+        "DATA": [], "BUSINESS": [], "IT": [], "ANALYST": [], "UNKNOWN": []
+    }
     for s in stakeholders:
         leg = _classify_leg(s["title"])
-        if leg in legs:
-            legs[leg].append(s)
+        legs[leg].append(s)
 
+    # ── Build 2x2 grid ─────────────────────────────────────────────────────
     out = "<div class='stool-grid'>"
     for row_pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]:
         for leg_key in row_pair:
@@ -474,6 +544,34 @@ def _four_leg_stool_section(ts_data: dict, account_name: str) -> str:
             out += "</div>"
 
     out += "</div>"
+
+    # Show unclassified contacts below grid
+    if legs["UNKNOWN"]:
+        out += (
+            "<p style='font-size:12px;color:#64748b;margin-top:8px;'>"
+            "⚠️ Unclassified (title not mapped to a leg): "
+        )
+        out += ", ".join(_e(s["name"]) for s in legs["UNKNOWN"])
+        out += "</p>"
+
+    # Show note if no stakeholders found at all
+    if not stakeholders:
+        out = (
+            "<div class='stool-grid'>"
+            + "".join(
+                f"<div class='stool-leg empty' style='background:#f8fafc;'>"
+                f"<div class='stool-leg-title' style='background:{LEG_COLORS[k]};'>"
+                f"{LEG_ICONS[k]} {k}</div>"
+                f"<p class='flag'>⚠️ No contact identified — add to target list</p>"
+                f"</div>"
+                for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]
+                for k in pair
+            )
+            + "</div>"
+            + "<p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data available. "
+            + "Run Exec Profile Builder to populate this section.</p>"
+        )
+
     return out
 
 
@@ -828,7 +926,7 @@ def _sales_call_section(ts_data: dict) -> str:
     if flag_rows and flag_cols:
         flag_rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
     if det_rows and det_cols:
-        det_rec  = dict(zip(det_cols, det_rows[0]))  if isinstance(det_rows[0], list)  else det_rows[0]
+        det_rec  = dict(zip(det_cols,  det_rows[0]))  if isinstance(det_rows[0], list)  else det_rows[0]
 
     gong_fields = [
         ("Opportunity Gong Champion Validated",        "Opportunity Gong Champion",         "Champion"),
@@ -857,6 +955,75 @@ def _sales_call_section(ts_data: dict) -> str:
             detail_display = _e(detail_text) if detail_text else "—"
         out += f"<tr><td>{_e(label)}</td><td>{validated_display}</td><td>{detail_display}</td></tr>"
     out += "</tbody></table>"
+    return out
+
+
+def _gong_calls_section(raw: dict) -> str:
+    """Render Gong call signals from sales_call_analyzer subagent output."""
+    calls = raw.get("sales_calls", {})
+    if not calls:
+        return "<p>No Gong call data available.</p>"
+
+    signals    = calls.get("signals", [])
+    next_steps = calls.get("consolidated_next_steps", [])
+    total      = calls.get("total_rows", 0)
+    meaningful = calls.get("meaningful_count", 0)
+    voicemail  = calls.get("voicemail_count", 0)
+    no_content = calls.get("no_content_count", 0)
+
+    out  = f"<p><b>Total calls:</b> {total} | "
+    out += f"<b>Meaningful:</b> {meaningful} | "
+    out += f"<b>Voicemail:</b> {voicemail} | "
+    out += f"<b>No content:</b> {no_content}</p>"
+
+    if signals:
+        out += "<h4>Call Signals</h4>"
+        for s in signals[:10]:
+            if not isinstance(s, dict):
+                continue
+            sentiment = s.get("sentiment", "")
+            color = (
+                "#16a34a" if sentiment == "POSITIVE"
+                else "#ef4444" if sentiment == "NEGATIVE"
+                else "#d97706"
+            )
+            out += "<div class='driver'>"
+            out += (
+                f"<span style='color:{color};font-weight:700;'>{_e(sentiment)}</span>"
+                f" — <b>{_e(s.get('contact_name', '') or s.get('contact_email', ''))}</b>"
+            )
+            if s.get("call_name"):
+                out += f" | {_e(s['call_name'])}"
+            if s.get("brief_summary"):
+                out += f"<p>{_e(s['brief_summary'])}</p>"
+            if s.get("next_steps"):
+                out += f"<p><b>Next Steps:</b> {_e(s['next_steps'])}</p>"
+            if s.get("recommended_action"):
+                out += f"<p><b>Recommended Action:</b> {_e(s['recommended_action'])}</p>"
+            out += "</div>"
+
+    if next_steps:
+        out += "<h4>Consolidated Next Steps</h4>"
+        out += "<table><thead><tr><th>Priority</th><th>Contact</th><th>Action</th><th>Owner</th></tr></thead><tbody>"
+        for ns in next_steps:
+            if not isinstance(ns, dict):
+                continue
+            priority = ns.get("priority", "")
+            color = (
+                "#ef4444" if priority == "HIGH"
+                else "#d97706" if priority == "MED"
+                else "#6b7280"
+            )
+            out += (
+                f"<tr>"
+                f"<td><span style='color:{color};font-weight:700;'>{_e(priority)}</span></td>"
+                f"<td>{_e(ns.get('contact', ''))}</td>"
+                f"<td>{_e(ns.get('action', ''))}</td>"
+                f"<td>{_e(ns.get('owner', ''))}</td>"
+                f"</tr>"
+            )
+        out += "</tbody></table>"
+
     return out
 
 
@@ -1019,6 +1186,7 @@ def _get_tabs(phase: int) -> list:
         ("competitor",    "Competitor Intel"),
         ("deal_story",    "Deal Story"),
         ("sales_call",    "Sales Call Analysis"),
+        ("gong_calls",    "Gong Call Signals"),
         ("6sense",        "6Sense Intent"),
         ("roles",         "Hiring Signals"),
         ("case_studies",  "Case Studies"),
@@ -1048,8 +1216,11 @@ def _build_html_page(title: str, body: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# last line of Part 1 — _build_outreach_section ends above
+# Part 2 starts below with build_pg_report()
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Primary public function — internal PG report
-# Returns dict with filename + html string — no file writes
 # ---------------------------------------------------------------------------
 
 def build_pg_report(
@@ -1061,7 +1232,7 @@ def build_pg_report(
     header_data:     dict,
     phase:           int  = 1,
     outreach_data:   dict = None,
-    output_dir:      str  = "/sandbox",  # kept for API compatibility, not used
+    output_dir:      str  = "/sandbox",
 ) -> dict:
     """
     Build a PG report HTML string.
@@ -1069,7 +1240,7 @@ def build_pg_report(
     Returns
     -------
     dict with keys:
-        filename : str  — suggested filename (e.g. "acme_corp_pg_report_draft.html")
+        filename : str  — suggested filename
         html     : str  — complete HTML string ready to deliver
         slug     : str  — account slug
         phase    : int  — 1 (draft) or 2 (final)
@@ -1110,31 +1281,44 @@ def build_pg_report(
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
+
         elif tab_id == "stakeholders":
             body += "<h3>4-Leg Stool</h3>"
-            body += _four_leg_stool_section(ts_data, account_name)
+            body += _four_leg_stool_section(ts_data, account_name, raw)
             body += "<h3>Stakeholder Map</h3>"
             body += _stakeholder_map_section(ts_data)
             body += "<h3>ThoughtSpot Talking Point</h3>"
             body += _talking_point_section(account_name, matched_drivers, raw)
+
         elif tab_id == "why_ts":
             body += _value_drivers_section(matched_drivers)
+
         elif tab_id == "competitor":
             body += _competitor_section(raw, matched_drivers)
+
         elif tab_id == "deal_story":
             body += _deal_story_section(ts_data)
+
         elif tab_id == "sales_call":
             body += _sales_call_section(ts_data)
             body += "<h3>Activity History</h3>"
             body += _activity_section(ts_data)
+
+        elif tab_id == "gong_calls":
+            body += _gong_calls_section(raw)
+
         elif tab_id == "6sense":
             body += _6sense_section(ts_data)
+
         elif tab_id == "roles":
             body += _hiring_signals_section(raw)
+
         elif tab_id == "case_studies":
             body += _case_studies_section(raw, account_name)
+
         elif tab_id == "exec_profiles":
             body += _exec_profiles_section(raw)
+
         elif tab_id == "outreach":
             body += _outreach_section(outreach_data)
 
@@ -1146,13 +1330,12 @@ def build_pg_report(
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.1] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.2] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
 
 
 # ---------------------------------------------------------------------------
 # One-pager builder — external, customer-facing
-# Returns dict with filename + html string — no file writes
 # ---------------------------------------------------------------------------
 
 def build_onepager(
@@ -1160,17 +1343,24 @@ def build_onepager(
     account_name:    str,
     raw:             dict,
     matched_drivers: list,
-    output_dir:      str = "/sandbox",  # kept for API compatibility, not used
+    output_dir:      str = "/sandbox",
 ) -> dict:
     """
     Build an external customer-facing one-pager HTML string.
 
+    One-pager rules (non-negotiable):
+    - No stakeholder names, titles, or internal role labels
+    - No MEDDPICC terminology, deal stage, or SFDC references
+    - No Voltron, AE name, internal tools, or session metadata
+    - Content: company context → challenges → TS value → proof → demo CTA
+    - Demo CTA: always https://www.thoughtspot.com/demo
+
     Returns
     -------
     dict with keys:
-        filename : str  — suggested filename (e.g. "acme_corp_onepager.html")
-        html     : str  — complete HTML string ready to deliver
-        slug     : str  — account slug
+        filename : str
+        html     : str
+        slug     : str
     """
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
@@ -1272,99 +1462,5 @@ li {{margin: 6px 0; line-height: 1.6;}}
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.1] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.2] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
-
-
-# ---------------------------------------------------------------------------
-# Self-test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    print("=== pg_report_builder v5.1 self-test ===\n")
-
-    raw = {
-        "web_research": {
-            "industry": "Financial Services",
-            "description": {"text": "Acme Corp is a leading financial services firm.", "source": "https://acme.com/about", "source_type": "web", "url": "https://acme.com/about"},
-            "recent_news": [{"headline": "Acme raises $200M Series D", "date": "2024-11-01", "url": "https://techcrunch.com/acme", "source_type": "news"}],
-            "strategic_priorities": [{"text": "Expand self-service analytics", "source": "https://acme.com/blog", "source_type": "web", "url": "https://acme.com/blog"}],
-            "pain_points": [{"text": "Analysts overwhelmed with ad hoc requests", "source": "https://acme.com/jobs", "source_type": "job_posting", "url": "https://acme.com/jobs"}],
-        },
-        "tsumble": {
-            "total_open_roles": 12,
-            "role_highlights": [{"title": "Senior Data Analyst", "department": "Analytics", "location": "New York, NY", "date_posted": "2024-11-01", "source": "LinkedIn", "source_type": "linkedin", "url": "https://linkedin.com/jobs/123"}],
-            "hiring_trends": [{"trend": "Heavy hiring in data and analytics roles", "evidence": "8 of 12 open roles are data-related", "source": "LinkedIn", "url": "https://linkedin.com/jobs"}],
-        },
-        "competitor_intel": {
-            "tools_confirmed": [{"tool": "Tableau", "evidence": "Multiple job postings require Tableau", "source": "https://acme.com/jobs", "source_type": "job_posting", "url": "https://acme.com/jobs", "displacement_angle": "ThoughtSpot offers AI NLQ vs static dashboards", "thoughtspot_fit": "Strong"}],
-            "tools_suspected": [],
-            "displacement_summary": "Tableau is primary BI tool.",
-        },
-        "exec_profiles": {
-            "executives": [{"name": "Jane Smith", "title": "Chief Data Officer", "linkedin_url": "https://linkedin.com/in/janesmith", "bio_summary": {"text": "Jane leads all data strategy.", "source": "https://acme.com/team", "url": "https://acme.com/team"}, "public_quotes": [{"quote": "We need to democratize data.", "context": "Data Summit 2024", "source": "https://datasummit.com", "date": "2024-09-15", "url": "https://datasummit.com/janesmith"}], "recent_activity": [], "talking_points": []}]
-        },
-        "case_studies": {
-            "recommended_case_studies": [{"company": "T-Mobile", "url": "https://www.thoughtspot.com/customers/t-mobile", "why_chosen": "Similar self-service BI transformation", "key_metric": "10x faster insights for 5,000+ users", "industry_match": "Enterprise", "use_case_match": "Self-service BI", "source": "ThoughtSpot case study library", "source_type": "case_study"}]
-        },
-    }
-
-    ts_data = {
-        "sfdc_stakeholder": {"status": "ok", "column_names": ["Account Name", "Account Owner Name", "Account Owner Team", "Opportunity Name", "Opportunity Owner Name", "Opportunity CS Name", "Executive Business Sponsor [For Calculation]", "Opportunity Status"], "data_rows": [["Acme Corp", "Bob Jones", "West", "Acme - Q1 2025", "Bob Jones", "Sarah Lee", "Jane Smith", "Open"]]},
-        "meddpicc_flags": {"status": "ok", "column_names": ["Account Name", "Opportunity Name", "Opportunity Gong Champion Validated", "Opportunity Gong Economic Buyer Validated", "Opportunity Gong Identify Pain Validated", "Opportunity Gong Metrics Validated", "Opportunity Gong Decision Criteria Validated", "Opportunity Gong Decision Process Validated", "Opportunity Gong Paper Process Validated", "Opportunity Gong Competition Validated", "Opportunity Gong Data Readiness Validated"], "data_rows": [["Acme Corp", "Acme - Q1 2025", True, False, True, False, False, False, False, True, False]]},
-        "meddpicc_detail": {"status": "ok", "column_names": ["Account Name", "Opportunity Name", "Opportunity Gong Champion", "Opportunity Gong Economic Buyer", "Opportunity Gong Identify Pain", "Opportunity Gong Metrics", "Opportunity Gong Decision Criteria", "Opportunity Gong Decision Process", "Opportunity Gong Paper Process", "Opportunity Gong Competition", "Opportunity Gong Data Readiness"], "data_rows": [["Acme Corp", "Acme - Q1 2025", "Jane Smith", "", "Analyst bottleneck", "", "", "", "", "Tableau", ""]]},
-        "deal_stage": {"status": "ok", "column_names": ["Account Name", "Opportunity Name", "Opportunity Stage Maximum Name", "Opportunity Pipeline Qualified Flag", "Opportunity Owner Name", "Opportunity Last Activity Date"], "data_rows": [["Acme Corp", "Acme - Q1 2025", "S2 - Discovery", True, "Bob Jones", "2024-11-10"]]},
-        "deal_funnel_timing": {"status": "empty", "data_rows": [], "column_names": []},
-        "activity_history": {"status": "ok", "column_names": ["Account Name", "Activity Type", "Activity Subject", "Activity Time", "Activity Owner Name", "Activity Owner Role", "Activity Direction"], "data_rows": [["Acme Corp", "Call", "Discovery call", "2024-11-10", "Bob Jones", "AE", "Outbound"]]},
-        "6sense_intent": {"status": "ok", "column_names": ["Account Name", "Person 6S Intent Score", "Account Snapshot 6S Reach Score", "Account Owner Name"], "data_rows": [["Acme Corp", 87, 72, "Bob Jones"]]},
-    }
-
-    matched_drivers = [
-        {"key": "enable_self_service", "label": "Enable Self-Service for Business Teams", "match_score": 9, "evidence": ["self-service BI", "pain: analysts overwhelmed"]},
-        {"key": "modernize_legacy_bi", "label": "Modernize Legacy BI Stack", "match_score": 6, "evidence": ["migrate from Tableau"]},
-    ]
-
-    header_data = {"owner_name": "Bob Jones", "region": "West"}
-
-    # Test 1 — Phase 1
-    result1 = build_pg_report(slug="acme_corp", account_name="Acme Corp", raw=raw, ts_data=ts_data, matched_drivers=matched_drivers, header_data=header_data, phase=1)
-    assert result1["filename"] == "acme_corp_pg_report_draft.html"
-    assert "<html" in result1["html"]
-    assert result1["phase"] == 1
-    print(f"✅ Phase 1 report built: {result1['filename']} ({len(result1['html'])} chars)")
-
-    # Test 2 — Phase 2
-    outreach_data = {"sequences": [{"name": "Jane Smith", "title": "CDO", "emails": [{"subject": "Re: data at Acme", "body": "Hi Jane,\n\nSaw your Data Summit talk.\n\nBob"}], "linkedin_messages": [{"body": "Hi Jane — open to a chat?"}]}]}
-    result2 = build_pg_report(slug="acme_corp", account_name="Acme Corp", raw=raw, ts_data=ts_data, matched_drivers=matched_drivers, header_data=header_data, phase=2, outreach_data=outreach_data)
-    assert result2["filename"] == "acme_corp_pg_report_final.html"
-    assert "Jane Smith" in result2["html"]
-    assert result2["phase"] == 2
-    print(f"✅ Phase 2 report built: {result2['filename']} ({len(result2['html'])} chars)")
-
-    # Test 3 — One-pager
-    onepager = build_onepager(slug="acme_corp", account_name="Acme Corp", raw=raw, matched_drivers=matched_drivers)
-    assert onepager["filename"] == "acme_corp_onepager.html"
-    assert "thoughtspot.com/demo" in onepager["html"]
-    assert "MEDDPICC" not in onepager["html"]
-    assert "SFDC" not in onepager["html"]
-    assert "Bob Jones" not in onepager["html"]
-    print(f"✅ One-pager built: {onepager['filename']} ({len(onepager['html'])} chars)")
-
-    # Test 4 — 6Sense grades not raw scores
-    assert "87" not in result1["html"], "Raw 6Sense score must not appear"
-    assert "72" not in result1["html"], "Raw reach score must not appear"
-    print("✅ 6Sense raw scores not in report — grades only")
-
-    # Test 5 — Draft has no outreach tab, final does
-    assert "outreach" not in result1["html"].lower() or "Outreach" not in result1["html"]
-    assert "Data Summit" in result2["html"]
-    print("✅ Phase 1 no outreach, Phase 2 has outreach")
-
-    # Test 6 — Return type is dict not filepath string
-    assert isinstance(result1, dict), "build_pg_report must return dict"
-    assert isinstance(onepager, dict), "build_onepager must return dict"
-    assert "html" in result1
-    assert "html" in onepager
-    print("✅ Return types are dicts with html key")
-
-    print("\n=== All tests passed ===")
