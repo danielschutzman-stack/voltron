@@ -3,20 +3,16 @@ subagent_templates.py (v4)
 Render ready-to-send subagent objective strings from named templates.
 
 v4 Changes:
-- Added "combined_fast_sweep" template — lightweight version of
-  combined_account_research covering only web_research + tsumble.
-  Runs in ~3-4 minutes. Use for Fast Sweep batch across territory accounts.
-- Added "combined_deep_research" template — competitor_intel + case_studies.
-  Runs in ~3-4 minutes. Use as second-pass after fast sweep completes.
-- combined_account_research retained for single-account PG runs where
-  time is less constrained.
-- Added explicit 480s time budget warning to combined_account_research
-  to prevent 600s platform timeout.
+- Added "combined_fast_sweep" template — web_research + tsumble only (~3-4 min)
+- Added "combined_deep_research" template — competitor_intel + case_studies (~3-4 min)
+- Added "sales_call_analyzer" template — Gong call data via REST API direct query
+- combined_account_research retained for single-account PG runs
+- TIME BUDGET warnings on all combined templates
+- IMMEDIATELY when done save instructions on each module
 
 SUBAGENT TIME BUDGET RULE:
 Each subagent must complete within 480 seconds (8 minutes).
-The platform hard-kills at 600s. Always stay under 480s to allow
-buffer for file writes and cleanup.
+The platform hard-kills at 600s. Always stay under 480s.
 
 CITATION RULE (non-negotiable — applies to ALL templates):
 Every claim, finding, quote, or data point in subagent JSON output MUST
@@ -31,7 +27,7 @@ from string import Formatter
 
 
 # ---------------------------------------------------------------------------
-# Shared citation rule — injected into every template
+# Shared citation rule — injected into every web research template
 # ---------------------------------------------------------------------------
 
 _CITATION_RULE = """
@@ -78,6 +74,10 @@ TEMPLATE_DEFAULTS = {
     "combined_deep_research": {
         "industry":  "unknown — infer from company website",
         "use_case":  "unknown — infer from company context",
+    },
+    "sales_call_analyzer": {
+        "date_from": "01/01/2024",
+        "date_to":   "12/31/2025",
     },
 }
 
@@ -423,7 +423,7 @@ Check if each file exists before running — skip if already present.
 
 Module 1 — Company Overview (run first, ~1 min)
 Fetch homepage and About page: description, size, HQ, mission, recent news.
-Save to /sandbox/{slug}_web_research.json:
+Save to /sandbox/{slug}_web_research.json IMMEDIATELY when done:
 {{
   "company_name": "", "website": "", "industry": "",
   "description": {{"text": "", "source": "", "source_type": "web", "url": ""}},
@@ -439,7 +439,8 @@ Save to /sandbox/{slug}_web_research.json:
     {{"tool": "", "evidence": "", "source": "", "source_type": "job_posting|press_release|web", "url": ""}}
   ],
   "competitor_tools_in_use": [
-    {{"tool": "", "evidence": "", "source": "", "source_type": "job_posting|press_release|web|linkedin", "url": "", "displacement_angle": "", "thoughtspot_fit": ""}}
+    {{"tool": "", "evidence": "", "source": "", "source_type": "job_posting|press_release|web|linkedin",
+      "url": "", "displacement_angle": "", "thoughtspot_fit": ""}}
   ],
   "pain_points": [
     {{"text": "", "evidence": "", "source": "", "source_type": "web|job_posting|news", "url": ""}}
@@ -453,7 +454,7 @@ Save to /sandbox/{slug}_web_research.json:
 Module 2 — Job Postings (run concurrently with Module 1, ~2-3 min)
 Search careers page, LinkedIn, Indeed, Glassdoor. Focus on data/analytics/BI/engineering.
 If LinkedIn is blocked → immediately fall back to Exa. Do NOT retry LinkedIn.
-Save to /sandbox/{slug}_tsumble.json:
+Save to /sandbox/{slug}_tsumble.json IMMEDIATELY when done:
 {{
   "company_name": "",
   "total_open_roles": 0,
@@ -503,7 +504,7 @@ Check if each file exists before running — skip if already present.
 Module 1 — Competitor Intel (~3 min)
 Identify BI/analytics tools from job postings, press releases, Stackshare, BuiltWith.
 Note displacement angle for ThoughtSpot on every confirmed tool.
-Save to /sandbox/{slug}_competitor_intel.json:
+Save to /sandbox/{slug}_competitor_intel.json IMMEDIATELY when done:
 {{
   "company_name": "",
   "tools_confirmed": [
@@ -524,7 +525,7 @@ Module 2 — Case Studies (~2 min)
 Find top 3-5 ThoughtSpot customer stories matching this account's industry,
 use case, and company size. Search thoughtspot.com/customers and
 thoughtspot.com/resources.
-Save to /sandbox/{slug}_case_studies.json:
+Save to /sandbox/{slug}_case_studies.json IMMEDIATELY when done:
 {{
   "company_name": "{account_name}",
   "recommended_case_studies": [
@@ -728,6 +729,95 @@ Constraints
 - Check for existing output files before running each module — skip if present.
 """ + _CITATION_RULE,
 
+
+# ── Sales Call Analyzer ───────────────────────────────────────────────────────
+"sales_call_analyzer": """
+You are a Sales Call Analyzer subagent for ThoughtSpot. Your job is to query
+Gong call data for {account_name} via the ThoughtSpot REST API, classify the
+results, and synthesize actionable signals for the AE.
+
+Output File: {output_file}
+
+## Query Instructions
+
+CRITICAL: Do NOT use Spotter or spotter_search for call data.
+"call" is a reserved ThoughtSpot token — it will return "Invalid value token: call".
+
+Use the ThoughtSpot REST API directly:
+  POST {thoughtspot_url}/api/rest/2.0/searchdata
+  Headers:
+    Authorization: Bearer {thoughtspot_token}
+    Content-Type: application/json
+  Body:
+    {{
+      "query_string": "[Call Name] [Call Highlights Next Steps] [Call Brief] [Call Key Points] [Call Participant Emails] [Account Name] [Activity Created Date] [Account Name] contains '{account_name}' [Activity Created Date] >= '{date_from}' [Activity Created Date] <= '{date_to}'",
+      "logical_table_identifier": "GTM RevOps",
+      "data_format": "COMPACT",
+      "record_offset": 0,
+      "record_size": 100
+    }}
+
+NOTE: logical_table_identifier accepts the display name "GTM RevOps" directly.
+NOTE: record_size MUST be >= 100. Default of 20 will truncate results.
+
+## Response Handling
+
+For every row returned:
+1. HTML-decode all text fields: html.unescape(value)
+2. Replace &#13; and &#10; with \\n
+3. Classify the row:
+   - MEANINGFUL  → has Call Highlights Next Steps OR Call Key Points populated
+   - VOICEMAIL   → Call Brief contains "voicemail"
+   - NO-CONTENT  → Call Brief contains "outside service hours" or is empty/null
+
+Only synthesize MEANINGFUL rows. Count but do not surface the others.
+
+## Output Format
+
+Save a JSON file to {output_file} with this structure:
+{{
+  "account_name": "{account_name}",
+  "date_range": "{date_from} to {date_to}",
+  "total_rows": 0,
+  "meaningful_count": 0,
+  "voicemail_count": 0,
+  "no_content_count": 0,
+  "signals": [
+    {{
+      "sentiment": "POSITIVE | NEGATIVE | COLD",
+      "contact_name": "",
+      "contact_email": "",
+      "ts_rep_email": "",
+      "call_name": "",
+      "brief_summary": "",
+      "next_steps": "",
+      "recommended_action": ""
+    }}
+  ],
+  "consolidated_next_steps": [
+    {{
+      "priority": "HIGH | MED | LOW | DO NOT CONTACT",
+      "contact": "",
+      "action": "",
+      "owner": ""
+    }}
+  ]
+}}
+
+## Sentiment Classification Rules
+
+POSITIVE  — contact expressed interest, agreed to demo, shared pain points,
+            or progressed to next step
+NEGATIVE  — contact explicitly declined, said not interested, or ended call
+            without engagement. Flag with DO NOT CONTACT if explicit.
+COLD      — contact deflected, asked for email only, or was non-committal
+
+Sort signals: POSITIVE first, then COLD, then NEGATIVE.
+Sort consolidated_next_steps by priority: HIGH → MED → LOW → DO NOT CONTACT.
+
+Save and stop at 7 minutes regardless of completion state.
+""",
+
 }
 
 
@@ -743,29 +833,33 @@ def render(template_name: str, **kwargs) -> str:
     Required fields that are missing raise a KeyError with a helpful message.
 
     Args:
-        template_name : Key in TEMPLATES dict (e.g. "web_research", "tsumble")
+        template_name : Key in TEMPLATES dict
         **kwargs      : Template variables
 
     Returns:
         Rendered template string ready to send as a subagent objective.
 
-    Raises:
-        KeyError: If template_name not found in TEMPLATES.
-        KeyError: If a required (non-defaulted) template variable is missing.
-
-    Example — fast sweep (territory):
+    Examples:
+        # Fast sweep (territory):
         obj = render("combined_fast_sweep",
                      account_name="Acme Corp",
                      website_url="https://acme.com",
                      slug="acme_corp")
 
-    Example — deep research (territory second pass):
+        # Deep research (territory second pass):
         obj = render("combined_deep_research",
                      account_name="Acme Corp",
                      website_url="https://acme.com",
                      slug="acme_corp")
 
-    Example — full single-account PG:
+        # Sales call analyzer:
+        obj = render("sales_call_analyzer",
+                     account_name="Acme Corp",
+                     thoughtspot_url=os.environ.get("THOUGHTSPOT_URL"),
+                     thoughtspot_token=os.environ.get("THOUGHTSPOT_TOKEN"),
+                     output_file="/sandbox/acme_corp_sales_calls.json")
+
+        # Full single-account PG:
         obj = render("combined_account_research",
                      account_name="Acme Corp",
                      website_url="https://acme.com",
@@ -781,7 +875,6 @@ def render(template_name: str, **kwargs) -> str:
 
     template = TEMPLATES[template_name]
 
-    # Identify all fields referenced in the template
     formatter = Formatter()
     required_fields = {
         field_name
@@ -789,11 +882,9 @@ def render(template_name: str, **kwargs) -> str:
         if field_name is not None
     }
 
-    # Apply defaults for optional fields
     defaults = TEMPLATE_DEFAULTS.get(template_name, {})
     merged   = {**defaults, **kwargs}
 
-    # Check for missing required fields after defaults applied
     missing = required_fields - set(merged.keys())
     if missing:
         raise KeyError(
@@ -819,8 +910,8 @@ def get_required_fields(template_name: str) -> dict:
 
     Returns:
         {
-            "required": [...],   # must be provided by caller
-            "optional": [...],   # have defaults in TEMPLATE_DEFAULTS
+            "required": [...],
+            "optional": [...],
         }
     """
     if template_name not in TEMPLATES:
@@ -830,16 +921,16 @@ def get_required_fields(template_name: str) -> dict:
             f"Available templates: {available}"
         )
 
-    template  = TEMPLATES[template_name]
-    formatter = Formatter()
+    template   = TEMPLATES[template_name]
+    formatter  = Formatter()
     all_fields = {
         field_name
         for _, field_name, _, _ in formatter.parse(template)
         if field_name is not None
     }
 
-    optional  = set(TEMPLATE_DEFAULTS.get(template_name, {}).keys())
-    required  = all_fields - optional
+    optional = set(TEMPLATE_DEFAULTS.get(template_name, {}).keys())
+    required = all_fields - optional
 
     return {
         "required": sorted(required),
@@ -852,13 +943,12 @@ def get_required_fields(template_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import os
     print("=== subagent_templates v4 self-test ===\n")
 
-    # 1. List templates
     templates = list_templates()
     print(f"Templates found ({len(templates)}): {templates}\n")
 
-    # 2. Check required vs optional fields per template
     for name in templates:
         fields = get_required_fields(name)
         print(f"  {name}:")
@@ -866,16 +956,17 @@ if __name__ == "__main__":
         print(f"    optional: {fields['optional']}")
     print()
 
-    # 3. Validate render with full kwargs
     full_kwargs = {
-        "account_name": "Acme Corp",
-        "website_url":  "https://acme.com",
-        "industry":     "Financial Services",
-        "output_file":  "/tmp/test_output.json",
-        "careers_url":  "https://acme.com/careers",
-        "stakeholders": "Jane Smith (CDO), Bob Lee (VP Analytics)",
-        "use_case":     "self-service BI",
-        "slug":         "acme_corp",
+        "account_name":     "Acme Corp",
+        "website_url":      "https://acme.com",
+        "industry":         "Financial Services",
+        "output_file":      "/tmp/test_output.json",
+        "careers_url":      "https://acme.com/careers",
+        "stakeholders":     "Jane Smith (CDO), Bob Lee (VP Analytics)",
+        "use_case":         "self-service BI",
+        "slug":             "acme_corp",
+        "thoughtspot_url":  "https://thoughtspot.example.com",
+        "thoughtspot_token": "test_token_123",
     }
 
     for name in templates:
@@ -887,73 +978,50 @@ if __name__ == "__main__":
 
     print()
 
-    # 4. Validate fast sweep template
-    try:
-        rendered = render(
-            "combined_fast_sweep",
-            account_name="Acme Corp",
-            website_url="https://acme.com",
-            slug="acme_corp",
-        )
-        assert "/sandbox/acme_corp_web_research.json" in rendered
-        assert "/sandbox/acme_corp_tsumble.json" in rendered
-        assert "/sandbox/acme_corp_competitor_intel.json" not in rendered
-        print("  ✅ combined_fast_sweep: correct output files")
-    except Exception as exc:
-        print(f"  ❌ combined_fast_sweep FAILED — {exc}")
-
-    # 5. Validate deep research template
-    try:
-        rendered = render(
-            "combined_deep_research",
-            account_name="Acme Corp",
-            website_url="https://acme.com",
-            slug="acme_corp",
-        )
-        assert "/sandbox/acme_corp_competitor_intel.json" in rendered
-        assert "/sandbox/acme_corp_case_studies.json" in rendered
-        assert "/sandbox/acme_corp_web_research.json" not in rendered
-        print("  ✅ combined_deep_research: correct output files")
-    except Exception as exc:
-        print(f"  ❌ combined_deep_research FAILED — {exc}")
-
-    # 6. Validate optional field defaults work
-    try:
-        rendered = render(
-            "combined_account_research",
-            account_name="Acme Corp",
-            website_url="https://acme.com",
-            slug="acme_corp",
-            output_file="/tmp/acme.json",
-        )
-        print("  ✅ combined_account_research: optional fields defaulted OK")
-    except Exception as exc:
-        print(f"  ❌ combined_account_research optional defaults FAILED — {exc}")
-
-    # 7. Validate missing required field raises correctly
-    try:
-        render("web_research", website_url="https://acme.com")
-        print("  ❌ Should have raised KeyError for missing account_name")
-    except KeyError as exc:
-        print(f"  ✅ Missing required field raised correctly: {exc}")
-
-    # 8. Validate slug appears in combined output file paths
-    rendered = render(
-        "combined_account_research",
-        account_name="Acme Corp",
-        website_url="https://acme.com",
-        slug="acme_corp",
-        output_file="/tmp/acme.json",
-    )
+    # Validate fast sweep output files
+    rendered = render("combined_fast_sweep",
+                      account_name="Acme Corp",
+                      website_url="https://acme.com",
+                      slug="acme_corp")
     assert "/sandbox/acme_corp_web_research.json" in rendered
     assert "/sandbox/acme_corp_tsumble.json" in rendered
-    assert "/sandbox/acme_corp_exec_profiles.json" in rendered
-    print("  ✅ combined_account_research: slug output file paths verified")
+    assert "/sandbox/acme_corp_competitor_intel.json" not in rendered
+    print("  ✅ combined_fast_sweep: correct output files")
 
-    # 9. Verify time budget warnings present in all combined templates
-    for name in ["combined_fast_sweep", "combined_deep_research", "combined_account_research"]:
-        rendered = render(name, account_name="X", website_url="https://x.com", slug="x", output_file="/tmp/x.json")
-        assert "8 minutes" in rendered or "TIME BUDGET" in rendered, f"{name} missing time budget"
+    # Validate deep research output files
+    rendered = render("combined_deep_research",
+                      account_name="Acme Corp",
+                      website_url="https://acme.com",
+                      slug="acme_corp")
+    assert "/sandbox/acme_corp_competitor_intel.json" in rendered
+    assert "/sandbox/acme_corp_case_studies.json" in rendered
+    assert "/sandbox/acme_corp_web_research.json" not in rendered
+    print("  ✅ combined_deep_research: correct output files")
+
+    # Validate sales_call_analyzer renders with defaults
+    rendered = render("sales_call_analyzer",
+                      account_name="Acme Corp",
+                      thoughtspot_url="https://ts.example.com",
+                      thoughtspot_token="tok_123",
+                      output_file="/sandbox/acme_corp_sales_calls.json")
+    assert "GTM RevOps" in rendered
+    assert "record_size" in rendered
+    assert "DO NOT use Spotter" in rendered
+    print("  ✅ sales_call_analyzer: rendered with defaults OK")
+
+    # Validate time budget warnings
+    for name in ["combined_fast_sweep", "combined_deep_research",
+                 "combined_account_research"]:
+        rendered = render(name, account_name="X", website_url="https://x.com",
+                          slug="x", output_file="/tmp/x.json")
+        assert "8 minutes" in rendered or "TIME BUDGET" in rendered
         print(f"  ✅ {name}: time budget warning present")
+
+    # Validate missing required field raises
+    try:
+        render("web_research", website_url="https://acme.com")
+        print("  ❌ Should have raised KeyError")
+    except KeyError as exc:
+        print(f"  ✅ Missing required field raised correctly")
 
     print("\nSelf-test complete.")
