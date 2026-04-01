@@ -1136,7 +1136,7 @@ def _render_claim_annotations(annotations: list) -> str:
 
         out += f"<div style='margin-bottom:4px;'>"
         out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
-        out += f"<span style='font-style:italic;color:#334155;'>"{claim}"</span>"
+        out += f"<span style='font-style:italic;color:#334155;'>&ldquo;{claim}&rdquo;</span>"
         out += "</div>"
 
         if basis:
