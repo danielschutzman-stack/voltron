@@ -1035,8 +1035,8 @@ def _outreach_section(outreach_data: dict) -> str:
     for seq in sequences:
         if not isinstance(seq, dict):
             continue
-        name    = _e(seq.get("name", "") or seq.get("contact_name", ""))
-        title   = _e(seq.get("title", "") or seq.get("contact_title", ""))
+        name    = _e(seq.get("contact_name", "") or seq.get("name", ""))
+        title   = _e(seq.get("contact_title", "") or seq.get("title", ""))
         emails  = seq.get("emails", [])
         li_msgs = seq.get("linkedin_messages", [])
 
@@ -1050,10 +1050,18 @@ def _outreach_section(outreach_data: dict) -> str:
             out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>Email Sequence</p>"
             for i, email in enumerate(emails, 1):
                 if isinstance(email, dict):
-                    subj = _e(email.get("subject", f"Email {i}"))
-                    body = _e(email.get("body", ""))
-                    out += f"<div style='margin-bottom:12px;'><b style='font-size:13px;color:{NAVY};'>Email {i}: {subj}</b>"
-                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre></div>"
+                    subj        = _e(email.get("subject", f"Email {i}"))
+                    body        = _e(email.get("body", ""))
+                    annotations = email.get("claim_annotations", [])
+
+                    out += f"<div style='margin-bottom:20px;'>"
+                    out += f"<b style='font-size:13px;color:{NAVY};'>Email {i}: {subj}</b>"
+                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
+
+                    if annotations:
+                        out += _render_claim_annotations(annotations)
+
+                    out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(email))}</pre>"
 
@@ -1061,12 +1069,103 @@ def _outreach_section(outreach_data: dict) -> str:
             out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>LinkedIn Sequence</p>"
             for i, msg in enumerate(li_msgs, 1):
                 if isinstance(msg, dict):
-                    body = _e(msg.get("body", "") or msg.get("message", ""))
-                    out += f"<div style='margin-bottom:10px;'><b style='font-size:13px;color:{NAVY};'>LinkedIn {i}</b>"
-                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre></div>"
+                    body        = _e(msg.get("body", "") or msg.get("message", ""))
+                    annotations = msg.get("claim_annotations", [])
+
+                    out += f"<div style='margin-bottom:16px;'>"
+                    out += f"<b style='font-size:13px;color:{NAVY};'>LinkedIn {i}</b>"
+                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
+
+                    if annotations:
+                        out += _render_claim_annotations(annotations)
+
+                    out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
+
         out += "</div>"
+    return out
+
+
+def _render_claim_annotations(annotations: list) -> str:
+    """
+    Render claim annotations as a collapsible AE-only reference section
+    below each email/LinkedIn message.
+    """
+    if not annotations:
+        return ""
+
+    flags   = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
+    clean   = [a for a in annotations if isinstance(a, dict) and not a.get("flag")]
+    unverified_count = len(flags)
+
+    uid = f"ann_{id(annotations)}"
+
+    out  = f"<details style='margin-top:8px;'>"
+    out += f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
+    out += f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
+    out += f"display:flex;align-items:center;gap:8px;'>"
+    out += f"🔍 Claim annotations ({len(annotations)})"
+    if unverified_count:
+        out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
+    out += "</summary>"
+    out += f"<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
+
+    for j, ann in enumerate(annotations):
+        if not isinstance(ann, dict):
+            continue
+        claim      = _e(ann.get("claim", ""))
+        basis      = _e(ann.get("basis", ""))
+        source     = ann.get("source", "")
+        src_type   = _e(ann.get("source_type", ""))
+        confidence = ann.get("confidence", "confirmed")
+        flag       = ann.get("flag", "")
+
+        bg_color = "#FFF7ED" if flag else "#F8FAFF"
+        border_color = "#FED7AA" if flag else "#E2E8F8"
+        conf_color = (
+            "#16A34A" if confidence == "confirmed"
+            else "#D97706" if confidence == "inferred"
+            else "#94A3B8"
+        )
+
+        out += (
+            f"<div style='padding:10px 14px;background:{bg_color};"
+            f"border-bottom:1px solid {border_color};font-size:12px;'>"
+        )
+
+        out += f"<div style='margin-bottom:4px;'>"
+        out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
+        out += f"<span style='font-style:italic;color:#334155;'>"{claim}"</span>"
+        out += "</div>"
+
+        if basis:
+            out += f"<div style='margin-bottom:4px;color:#475569;'>"
+            out += f"<span style='font-weight:600;'>Basis:</span> {basis}"
+            out += "</div>"
+
+        out += f"<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
+
+        if source:
+            if source.startswith("http"):
+                out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
+            else:
+                out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
+
+        out += (
+            f"<span style='color:{conf_color};font-size:10px;font-weight:700;"
+            f"text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
+        )
+
+        if flag:
+            out += (
+                f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;"
+                f"border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
+            )
+
+        out += "</div></div>"
+
+    out += "</div></details>"
     return out
 
 
