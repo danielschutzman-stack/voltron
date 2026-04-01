@@ -19,7 +19,6 @@ import html as _html
 
 from value_drivers import get_drivers, get_money_signals
 
-
 NAVY       = "#1D2D50"
 BLUE       = "#2E5CE5"
 LIGHT_BLUE = "#EBF2FF"
@@ -69,12 +68,10 @@ LEG_RULES = [
     ]),
 ]
 
-
 def _e(v) -> str:
     if v is None:
         return ""
     return _html.escape(str(v))
-
 
 def _text(v, fallback: str = "") -> str:
     if v is None:
@@ -92,7 +89,6 @@ def _text(v, fallback: str = "") -> str:
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
-
 def _src_badge(v) -> str:
     if not isinstance(v, dict):
         return ""
@@ -108,12 +104,10 @@ def _src_badge(v) -> str:
         )
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
-
 def _render_item(v) -> str:
     if isinstance(v, dict):
         return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
-
 
 def _classify_leg(title: str) -> str:
     if not title:
@@ -124,7 +118,6 @@ def _classify_leg(title: str) -> str:
             return leg
     return "UNKNOWN"
 
-
 def _score_to_grade(score) -> str:
     try:
         n = float(score)
@@ -134,7 +127,6 @@ def _score_to_grade(score) -> str:
         return "C"
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
-
 
 _CSS = f"""
 <style>
@@ -341,7 +333,6 @@ function showTab(slug, tabId) {
 </script>
 """
 
-
 def _section_header(icon: str, title: str) -> str:
     return (
         f"<div class='section-header'>"
@@ -350,11 +341,9 @@ def _section_header(icon: str, title: str) -> str:
         f"</div>"
     )
 
-
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
-
 
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
     out  = f"<div class='signal-card'>"
@@ -366,7 +355,6 @@ def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
             out += f"<div class='money-row'><span>{b}</span></div>"
     out += "</div>"
     return out
-
 
 def _company_overview_section(raw: dict) -> str:
     wr   = raw.get("web_research", {})
@@ -408,7 +396,6 @@ def _company_overview_section(raw: dict) -> str:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
 
     return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
-
 
 def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) -> str:
     raw = raw or {}
@@ -521,7 +508,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         )
     return out
 
-
 def _stakeholder_map_section(ts_data: dict) -> str:
     sfdc      = ts_data.get("sfdc_stakeholder", {})
     rows      = sfdc.get("data_rows", [])
@@ -586,7 +572,6 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     out += "</tbody></table>" + crossref
     return out
 
-
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
         return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
@@ -627,7 +612,6 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
         f"<p>{tp_text}</p></div>"
     )
 
-
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
@@ -663,7 +647,6 @@ def _hiring_signals_section(raw: dict) -> str:
             out += f"<tr><td colspan='4'>{_e(str(r))}</td></tr>"
     out += "</tbody></table>"
     return out
-
 
 def _competitor_section(raw: dict, matched_drivers: list) -> str:
     ci        = raw.get("competitor_intel", {})
@@ -708,7 +691,6 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
         out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
 
-
 def _value_drivers_section(matched_drivers: list) -> str:
     if not matched_drivers:
         return "<p style='color:#94A3B8;'>No value driver data available.</p>"
@@ -734,76 +716,276 @@ def _value_drivers_section(matched_drivers: list) -> str:
     return out
 
 
+def _decode_ts_date(val, fmt="%b %Y") -> str:
+    """Decode ThoughtSpot epoch dict {'v': {'s': 1234}} or raw string to readable date."""
+    from datetime import datetime
+    if isinstance(val, dict):
+        inner = val.get("v", val)
+        if isinstance(inner, dict) and "s" in inner:
+            try:
+                return datetime.utcfromtimestamp(inner["s"]).strftime(fmt)
+            except Exception:
+                return str(inner)
+    if val is None or val == "":
+        return ""
+    return str(val)
+
+
+def _classify_deal(days_cold, activity_rows, cols) -> str:
+    """ghost >365d | cold 180-365d | stalled 60-180d | live <60d | sdr_only | unknown"""
+    if days_cold is None:
+        return "unknown"
+    try:
+        dc = int(days_cold)
+    except (TypeError, ValueError):
+        return "unknown"
+    role_idx = cols.index("Activity Owner Role") if "Activity Owner Role" in cols else -1
+    if role_idx >= 0 and activity_rows:
+        roles = set()
+        for r in activity_rows:
+            if isinstance(r, list) and len(r) > role_idx:
+                roles.add(str(r[role_idx]))
+        ae_roles = {r for r in roles if r and any(k in r for k in ("AE", "Account Executive", " SE ", "Solutions Engineer", "Sales Engineer"))}
+        if not ae_roles and roles - {"", "None", "nan"}:
+            return "sdr_only"
+    if dc > 365:  return "ghost"
+    if dc > 180:  return "cold"
+    if dc > 60:   return "stalled"
+    return "live"
+
+
 def _deal_story_section(ts_data: dict) -> str:
-    ds_result = ts_data.get("deal_stage", {})
-    ft_result = ts_data.get("deal_funnel_timing", {})
-    ds_rows   = ds_result.get("data_rows", [])
-    ds_cols   = ds_result.get("column_names", [])
-    ft_rows   = ft_result.get("data_rows", [])
-    ft_cols   = ft_result.get("column_names", [])
+    import re as _re
+
+    ds_result  = ts_data.get("deal_stage", {})
+    ft_result  = ts_data.get("deal_funnel_timing", {})
+    act_result = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
+    opp_detail = ts_data.get("opp_detail", {})
+
+    ds_rows  = ds_result.get("data_rows", [])
+    ds_cols  = ds_result.get("column_names", [])
+    ft_rows  = ft_result.get("data_rows", [])
+    ft_cols  = ft_result.get("column_names", [])
+    act_rows = act_result.get("data_rows", [])
+    act_cols = act_result.get("column_names", [])
+    od_rows  = opp_detail.get("data_rows", [])
+    od_cols  = opp_detail.get("column_names", [])
 
     if not ds_rows:
-        return "<p style='color:#94A3B8;'>No deal story data available.</p>"
+        return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
+
+    ds_rec      = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
+    opp_name    = _e(ds_rec.get("Opportunity Name", ""))
+    stage       = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
+    owner       = _e(ds_rec.get("Opportunity Owner Name", ""))
+    pq          = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
+    created     = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
+    last_act    = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
+
+    days_cold   = None
+    prior_close = ""
+    if od_rows:
+        od_rec      = dict(zip(od_cols, od_rows[0])) if isinstance(od_rows[0], list) else od_rows[0]
+        days_cold   = od_rec.get("Total Days from Account last touch", od_rec.get("Days from Account last touch"))
+        prior_close = _decode_ts_date(od_rec.get("Month(Opportunity Prior Close Date)", od_rec.get("Opportunity Prior Close Date", "")))
+        if not created:  created  = _decode_ts_date(od_rec.get("Month(Opportunity Created Date)", ""))
+        if not last_act: last_act = _decode_ts_date(od_rec.get("Month(Opportunity Last Activity Date)", ""))
+        if not owner:    owner    = _e(od_rec.get("Opportunity Owner Name", ""))
+
+    deal_class = _classify_deal(
+        int(days_cold) if days_cold is not None else None,
+        act_rows, act_cols
+    )
+
+    # Funnel timing — skip entirely if all zeros
+    ft_rec        = {}
+    has_ft_values = False
+    if ft_rows:
+        ft_rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
+        has_ft_values = any(
+            ft_rec.get(k, 0) not in (0, None, "", "0")
+            for k in ["Total f Opportunity S1 Duration", "Total f Opportunity S2 Duration",
+                      "Total f Opportunity S3 Duration", "Total f Opportunity M0 to S7 Duration"]
+        )
 
     out = ""
-    for row in ds_rows[:3]:
-        rec   = dict(zip(ds_cols, row)) if isinstance(row, list) else row
-        name  = _e(rec.get("Opportunity Name", ""))
-        stage = _e(rec.get("Opportunity Stage Maximum Name", ""))
-        owner = _e(rec.get("Opportunity Owner Name", ""))
-        date  = _e(rec.get("Opportunity Last Activity Date", ""))
-        pq    = rec.get("Opportunity Pipeline Qualified Flag", "")
 
-        out += "<div class='opp-card'>"
-        out += f"<b style='font-size:14px;color:{NAVY};'>{name}</b>"
-        if stage: out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
-        if pq:    out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
-        if owner or date:
-            out += f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>"
-            if owner: out += f"Owner: {owner}"
-            if owner and date: out += " · "
-            if date: out += f"Last activity: {date}"
-            out += "</div>"
+    # ── Opp header card ──────────────────────────────────────────────
+    CLASS_BADGES = {
+        "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
+        "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
+        "stalled":  ("<span class='pill' style='background:#FFFBEB;color:#B45309;margin-left:6px;'>⏸ Stalled</span>", "#B45309"),
+        "sdr_only": ("<span class='pill' style='background:#EFF6FF;color:#1D4ED8;margin-left:6px;'>📞 SDR-Only Touches</span>", "#1D4ED8"),
+        "live":     ("", "#16A34A"),
+        "unknown":  ("", "#64748B"),
+    }
+    badge_html, dc_color = CLASS_BADGES.get(deal_class, ("", "#64748B"))
+
+    out += f"<div class='opp-card'>"
+    out += f"<b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
+    if stage:    out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
+    if pq:       out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
+    if badge_html: out += badge_html
+
+    meta = []
+    if owner:      meta.append(f"Owner: {owner}")
+    if created:    meta.append(f"Created: {created}")
+    if last_act:   meta.append(f"Last opp activity: {last_act}")
+    if prior_close: meta.append(f"Prior close date: {prior_close}")
+    if days_cold is not None:
+        dc = int(days_cold)
+        meta.append(f"<span style='color:{dc_color};font-weight:700;'>{dc}d since last account touch</span>")
+
+    if meta:
+        out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>"
+        out += " &nbsp;·&nbsp; ".join(meta)
         out += "</div>"
+    out += "</div>"
 
-    if ft_rows:
-        rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
-        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;'>Funnel Timing</h3>"
-        out += "<table><thead><tr><th>Stage</th><th>Duration</th></tr></thead><tbody>"
-        for stage_key, label in [
-            ("f Opportunity S1 Duration", "S1"),
-            ("f Opportunity S2 Duration", "S2"),
-            ("f Opportunity S3 Duration", "S3"),
-            ("f Opportunity M0 to S7 Duration", "M0→S7"),
+    # ── Activity table ────────────────────────────────────────────────
+    if act_rows:
+        type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅",
+                      "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
+        date_idx  = next((act_cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in act_cols), -1)
+        type_idx  = act_cols.index("Activity Type")     if "Activity Type"     in act_cols else -1
+        subj_idx  = act_cols.index("Activity Subject")  if "Activity Subject"  in act_cols else -1
+        owner_idx = act_cols.index("Activity Owner Name") if "Activity Owner Name" in act_cols else -1
+
+        out += f"""<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;
+                   letter-spacing:1px;margin:20px 0 10px;'>All Account Activity ({len(act_rows)} touches)</p>
+<table style='width:100%;border-collapse:collapse;font-size:12px;'>
+  <thead>
+    <tr style='background:#F8FAFF;'>
+      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>
+      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>
+      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Prospect Contact</th>
+      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>
+      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>
+    </tr>
+  </thead>
+  <tbody>"""
+        for i, row in enumerate(act_rows[:30]):
+            row = row if isinstance(row, list) else list(row.values())
+            date_val  = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
+            atype_raw = str(row[type_idx])               if type_idx  >= 0 and len(row) > type_idx  else ""
+            subj_raw  = str(row[subj_idx])               if subj_idx  >= 0 and len(row) > subj_idx  else ""
+            owner_val = str(row[owner_idx])              if owner_idx >= 0 and len(row) > owner_idx else ""
+            subj_clean = _re.sub(r'\[Outreach\]\s*|\[\w+\]\s*', "", subj_raw).strip()
+            prospect   = "Unknown Contact"
+            nm = _re.search(r'(?:Call|Email|to|for)\s+([A-Z][a-z]+ [A-Z][a-z]+)', subj_raw)
+            if nm: prospect = nm.group(1)
+            icon     = type_icons.get(atype_raw, "📌")
+            bg       = "#FAFBFF" if i % 2 == 0 else "#FFFFFF"
+            dim      = "opacity:0.55;" if owner_val in ("Salesforce Automation", "") else ""
+            out += (f"\n    <tr style='background:{bg};{dim}'>"
+                    f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{_e(date_val)}</td>"
+                    f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{icon} {_e(atype_raw)}</td>"
+                    f"<td style='padding:7px 10px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(prospect)}</td>"
+                    f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;'>{_e(subj_clean)}</td>"
+                    f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;font-style:italic;'>{_e(owner_val)}</td>"
+                    f"</tr>")
+        out += "\n  </tbody></table>"
+
+    # ── Funnel timing (only when non-zero) ────────────────────────────
+    if has_ft_values:
+        timing_map = [
+            ("Total f Opportunity S1 Duration", "S1"),
+            ("Total f Opportunity S2 Duration", "S2"),
+            ("Total f Opportunity S3 Duration", "S3"),
+            ("Total f Opportunity M0 to S7 Duration", "M0→S7"),
             ("Opportunity Current Stage Duration", "Current Stage"),
-        ]:
-            val = rec.get(stage_key, "")
-            if val:
-                out += f"<tr><td>{label}</td><td>{_e(str(val))}</td></tr>"
+        ]
+        out += f"<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 8px;'>Funnel Timing</h3>"
+        out += "<table style='border-collapse:collapse;font-size:12px;'>"
+        out += f"<thead><tr style='background:#F8FAFF;'><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Stage</th><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Days</th></tr></thead><tbody>"
+        for key, label in timing_map:
+            val = ft_rec.get(key)
+            if val not in (0, None, "", "0"):
+                out += (f"<tr><td style='padding:6px 12px;color:#475569;border-bottom:1px solid #F1F5F9;'>{label}</td>"
+                        f"<td style='padding:6px 12px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(str(val))}</td></tr>")
         out += "</tbody></table>"
+
+    # ── Contextual callouts based on deal class ───────────────────────
+    if deal_class in ("ghost", "cold", "stalled", "sdr_only"):
+        dc_str = f"{int(days_cold)}d" if days_cold is not None else "extended time"
+        sdr_li = ("<li>All prior touches were <strong>SDR-level or automated</strong> — "
+                  "no AE or SE has had a real conversation with this account</li>"
+                  if deal_class == "sdr_only" else "")
+        prior_li = (f"<li>Prior close date <strong>{prior_close}</strong> has passed — "
+                    "update or re-create opp after re-qualification</li>"
+                    if prior_close else "")
+
+        out += f"""
+<div style='margin-top:20px;background:#FFF7ED;border-left:4px solid #D97706;border-radius:8px;padding:16px 18px;'>
+  <div style='font-size:11px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚡ Re-Engagement Context</div>
+  <ul style='margin:0;padding-left:18px;font-size:13px;color:#475569;line-height:1.7;'>
+    <li>Account cold for <strong>{dc_str}</strong> — treat as net-new re-engage, not pipeline continuation</li>
+    {sdr_li}
+    <li>Recommend AE-led outreach with a fresh angle tied to what has changed since last contact</li>
+  </ul>
+</div>
+<div style='margin-top:12px;background:#FFF1F2;border-left:4px solid #E11D48;border-radius:8px;padding:14px 16px;'>
+  <div style='font-size:11px;font-weight:700;color:#E11D48;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚠️ Risk Flags</div>
+  <ul style='margin:0;padding-left:18px;font-size:12px;color:#475569;line-height:1.6;'>
+    <li>Verify opp owner <strong>{owner}</strong> is still active and aware before any outreach</li>
+    {prior_li}
+    <li>Re-qualify from scratch — do not assume prior context carries over</li>
+  </ul>
+</div>"""
+
     return out
 
 
 def _activity_section(ts_data: dict) -> str:
-    rows = ts_data.get("activity_history", {}).get("data_rows", [])
-    cols = ts_data.get("activity_history", {}).get("column_names", [])
+    """Styled activity history table with prospect name extraction."""
+    import re as _re
+
+    act  = ts_data.get("activity_history_detail",
+           ts_data.get("activity_history", {}))
+    rows = act.get("data_rows", [])
+    cols = act.get("column_names", [])
+
     if not rows:
         return "<p style='color:#94A3B8;'>No activity history available.</p>"
 
-    out  = "<table><thead><tr><th>Date</th><th>Type</th><th>Prospect</th><th>Subject</th><th>Owner</th></tr></thead><tbody>"
-    for row in rows[:20]:
-        rec  = dict(zip(cols, row)) if isinstance(row, list) else row
-        out += (
-            f"<tr>"
-            f"<td>{_e(rec.get('Activity Time', '') or rec.get('Activity Created Date', ''))}</td>"
-            f"<td>{_e(rec.get('Activity Type', ''))}</td>"
-            f"<td style='color:#94A3B8;font-style:italic;'>Unknown Contact</td>"
-            f"<td>{_e(rec.get('Activity Subject', ''))}</td>"
-            f"<td>{_e(rec.get('Activity Owner Name', ''))}</td>"
-            f"</tr>"
-        )
+    date_idx  = next((cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in cols), -1)
+    type_idx  = cols.index("Activity Type")      if "Activity Type"      in cols else -1
+    subj_idx  = cols.index("Activity Subject")   if "Activity Subject"   in cols else -1
+    owner_idx = cols.index("Activity Owner Name") if "Activity Owner Name" in cols else -1
+
+    type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅",
+                  "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
+
+    out = (f"<table style='width:100%;border-collapse:collapse;font-size:12px;'>"
+           f"<thead><tr style='background:#F8FAFF;'>"
+           f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>"
+           f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>"
+           f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Prospect Contact</th>"
+           f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>"
+           f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>"
+           f"</tr></thead><tbody>")
+
+    for i, row in enumerate(rows[:30]):
+        row = row if isinstance(row, list) else list(row.values())
+        date_val   = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
+        atype_raw  = str(row[type_idx])               if type_idx  >= 0 and len(row) > type_idx  else ""
+        subj_raw   = str(row[subj_idx])               if subj_idx  >= 0 and len(row) > subj_idx  else ""
+        owner_val  = str(row[owner_idx])              if owner_idx >= 0 and len(row) > owner_idx else ""
+        subj_clean = _re.sub(r'\[Outreach\]\s*|\[\w+\]\s*', "", subj_raw).strip()
+        prospect   = "Unknown Contact"
+        nm = _re.search(r'(?:Call|Email|to|for)\s+([A-Z][a-z]+ [A-Z][a-z]+)', subj_raw)
+        if nm: prospect = nm.group(1)
+        icon = type_icons.get(atype_raw, "📌")
+        bg   = "#FAFBFF" if i % 2 == 0 else "#FFFFFF"
+        dim  = "opacity:0.55;" if owner_val in ("Salesforce Automation", "") else ""
+        out += (f"<tr style='background:{bg};{dim}'>"
+                f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{_e(date_val)}</td>"
+                f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{icon} {_e(atype_raw)}</td>"
+                f"<td style='padding:7px 10px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(prospect)}</td>"
+                f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;'>{_e(subj_clean)}</td>"
+                f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;font-style:italic;'>{_e(owner_val)}</td>"
+                f"</tr>")
     out += "</tbody></table>"
-    out += "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Prospect contact requires SFDC matching.</p>"
     return out
 
 
@@ -849,7 +1031,6 @@ def _sales_call_section(ts_data: dict) -> str:
         out += f"<tr><td><b>{_e(label)}</b></td><td>{v_display}</td><td>{d_display}</td></tr>"
     out += "</tbody></table>"
     return out
-
 
 def _gong_calls_section(raw: dict) -> str:
     calls = raw.get("sales_calls", {})
@@ -913,7 +1094,6 @@ def _gong_calls_section(raw: dict) -> str:
         out += "</tbody></table>"
     return out
 
-
 def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
@@ -933,7 +1113,6 @@ def _6sense_section(ts_data: dict) -> str:
         )
     out += "</tbody></table>"
     return out
-
 
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
@@ -963,7 +1142,6 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
         out += "</div>"
     out += "</div>"
     return out
-
 
 def _exec_profiles_section(raw: dict) -> str:
     execs = raw.get("exec_profiles", {}).get("executives", [])
@@ -1021,7 +1199,6 @@ def _exec_profiles_section(raw: dict) -> str:
                         out += "</blockquote>"
         out += "</div>"
     return out
-
 
 def _outreach_section(outreach_data: dict) -> str:
     if not outreach_data:
@@ -1086,7 +1263,6 @@ def _outreach_section(outreach_data: dict) -> str:
         out += "</div>"
     return out
 
-
 def _render_claim_annotations(annotations: list) -> str:
     """
     Render claim annotations as a collapsible AE-only reference section
@@ -1136,7 +1312,7 @@ def _render_claim_annotations(annotations: list) -> str:
 
         out += f"<div style='margin-bottom:4px;'>"
         out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
-        out += f"<span style='font-style:italic;color:#334155;'>&ldquo;{claim}&rdquo;</span>"
+        out += f"<span style='font-style:italic;color:#334155;'>{claim}</span>"
         out += "</div>"
 
         if basis:
@@ -1168,7 +1344,6 @@ def _render_claim_annotations(annotations: list) -> str:
     out += "</div></details>"
     return out
 
-
 def _get_tabs(phase: int) -> list:
     tabs = [
         ("overview",      "🏢 Overview"),
@@ -1187,7 +1362,6 @@ def _get_tabs(phase: int) -> list:
         tabs.append(("outreach", "✉️ Outreach"))
     return tabs
 
-
 def _build_html_page(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head>"
@@ -1200,7 +1374,6 @@ def _build_html_page(title: str, body: str) -> str:
         + _JS
         + "</body></html>"
     )
-
 
 def build_pg_report(
     slug:            str,
@@ -1281,8 +1454,6 @@ def build_pg_report(
         elif tab_id == "sales_call":
             body += _section_header("📞", "Sales Call Analysis")
             body += _sales_call_section(ts_data)
-            body += _section_header("📅", "Activity History")
-            body += _activity_section(ts_data)
 
         elif tab_id == "gong_calls":
             body += _section_header("🎙", "Gong Call Signals")
@@ -1318,7 +1489,6 @@ def build_pg_report(
 
     print(f"[pg_report_builder v5.3] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-
 
 def build_onepager(
     slug:            str,
