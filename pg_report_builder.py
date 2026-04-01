@@ -1,66 +1,17 @@
 """
-pg_report_builder.py — v5.2
+pg_report_builder.py — v5.3
 ----------------------------------------------------------------
 Builds PG report HTML files from subagent JSON output and TS query results.
 
-v5.2 changes:
-- _four_leg_stool_section() rewritten:
-  - Primary source: raw["exec_profiles"]["executives"] (has name + title)
-  - Secondary source: SFDC Executive Business Sponsor if populated
-  - Tertiary source: Gong champion/EB names from meddpicc_detail
-  - No longer uses Opportunity Owner Name (AE rep names)
-  - UNKNOWN leg shown below grid instead of silently dropped
-  - raw param added to function signature and call site
-
-v5.1 changes: No file writes. build_pg_report() and build_onepager() return
-dicts with {"filename", "html", "slug"} instead of writing to disk.
-Caller is responsible for delivering the HTML string via platform mechanism.
-
-Three output files per account (always):
-  {slug}_pg_report_draft.html  — Phase 1: full report without outreach
-  {slug}_pg_report_final.html  — Phase 2: full report with outreach
-  {slug}_onepager.html         — External customer-facing one-pager
-
-Usage:
-    from pg_report_builder import build_pg_report, build_onepager
-
-    result = build_pg_report(
-        slug="acme_corp",
-        account_name="Acme Corp",
-        raw={
-            "web_research":    {...},
-            "tsumble":         {...},
-            "competitor_intel":{...},
-            "exec_profiles":   {...},
-            "case_studies":    {...},
-            "sales_calls":     {...},
-        },
-        ts_data={
-            "sfdc_stakeholder":    {...},
-            "deal_stage":          {...},
-            "deal_funnel_timing":  {...},
-            "meddpicc_flags":      {...},
-            "meddpicc_detail":     {...},
-            "activity_history":    {...},
-            "6sense_intent":       {...},
-        },
-        matched_drivers=[
-            {"key": "enable_self_service", "label": "...", ...},
-        ],
-        header_data={"owner_name": "Jane Smith", "region": "West"},
-        phase=1,
-    )
-    # result = {"filename": "acme_corp_pg_report_draft.html",
-    #           "html": "<html>...</html>",
-    #           "slug": "acme_corp",
-    #           "phase": 1}
-
-    onepager = build_onepager(
-        slug="acme_corp",
-        account_name="Acme Corp",
-        raw={...},
-        matched_drivers=[...],
-    )
+v5.3 changes:
+- Full ThoughtSpot-brand redesign matching thoughtspot.com aesthetic
+- Hero section with gradient, eyebrow text, meta row
+- Section headers with icon + colored background
+- Cards, signal cards, talking point box all restyled
+- Print-optimized CSS — Cmd+P Save as PDF gives clean output
+- Tab navigation sticky at top, styled dark
+- One-pager redesigned with matching brand language
+- _four_leg_stool_section() uses exec_profiles as primary source (v5.2)
 """
 
 import datetime
@@ -68,10 +19,6 @@ import html as _html
 
 from value_drivers import get_drivers, get_money_signals
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 NAVY       = "#1D2D50"
 BLUE       = "#2E5CE5"
@@ -123,10 +70,6 @@ LEG_RULES = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Internal utilities
-# ---------------------------------------------------------------------------
-
 def _e(v) -> str:
     if v is None:
         return ""
@@ -155,29 +98,15 @@ def _src_badge(v) -> str:
         return ""
     src      = v.get("source") or v.get("source_url") or v.get("url") or ""
     src_type = v.get("source_type", "")
-
     if not src:
-        return " <span style='color:#9ca3af;font-size:11px;'>⚠️ no source</span>"
-
-    if "gong" in src.lower() or "call" in src.lower():
-        icon = "🎙"
-    elif "sfdc" in src.lower() or "salesforce" in src.lower():
-        icon = "📋"
-    elif "linkedin" in src.lower() or "job" in src.lower():
-        icon = "💼"
-    elif src.startswith("http"):
-        icon = "🌐"
-    else:
-        icon = "📌"
-
-    label = _e(src_type or "source")
+        return " <span style='color:#94A3B8;font-size:10px;'>⚠️ no source</span>"
     if src.startswith("http"):
+        label = _e(src_type or "source")
         return (
             f" <a href='{_e(src)}' target='_blank' "
-            f"style='color:#6b7280;font-size:11px;text-decoration:none;'>"
-            f"{icon} {label} ↗</a>"
+            f"style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
         )
-    return f" <span style='color:#6b7280;font-size:11px;'>{icon} {_e(src)}</span>"
+    return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
 
 def _render_item(v) -> str:
@@ -199,218 +128,290 @@ def _classify_leg(title: str) -> str:
 def _score_to_grade(score) -> str:
     try:
         n = float(score)
-        if n >= 90:
-            return "A+"
-        if n >= 75:
-            return "A"
-        if n >= 60:
-            return "B"
+        if n >= 90: return "A+"
+        if n >= 75: return "A"
+        if n >= 60: return "B"
         return "C"
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
 
-# ---------------------------------------------------------------------------
-# Shared CSS + JS
-# ---------------------------------------------------------------------------
-
 _CSS = f"""
 <style>
-*, *::before, *::after {{box-sizing: border-box;}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+*, *::before, *::after {{ box-sizing: border-box; }}
 body {{
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-    margin: 0; padding: 0;
-    background: #f8fafc; color: #1e293b;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    margin: 0; padding: 0; background: #f0f4ff; color: #0f172a;
+    font-size: 14px; line-height: 1.6;
 }}
-.container {{max-width: 1200px; margin: 0 auto; padding: 24px;}}
-h1 {{font-size: 28px; font-weight: 700; color: #0f172a;}}
-h2 {{
-    font-size: 22px; font-weight: 700; color: {NAVY};
-    border-bottom: 2px solid {BLUE};
-    padding-bottom: 8px; margin-top: 32px;
+.page {{
+    max-width: 960px; margin: 32px auto; background: white;
+    border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden;
 }}
-h3 {{font-size: 18px; font-weight: 600; color: {NAVY}; margin-top: 24px;}}
-h4 {{font-size: 15px; font-weight: 600; color: #334155; margin: 12px 0 6px;}}
-p  {{margin: 6px 0; line-height: 1.6;}}
-a  {{color: {BLUE};}}
-table {{
-    width: 100%; border-collapse: collapse;
-    margin: 12px 0; font-size: 13px;
+.hero {{
+    background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%);
+    padding: 52px 60px 44px; color: white; position: relative; overflow: hidden;
 }}
-th {{
-    background: {NAVY}; color: #fff;
-    padding: 8px 12px; text-align: left;
+.hero::before {{
+    content: ''; position: absolute; top: -80px; right: -80px;
+    width: 360px; height: 360px;
+    background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%);
+    pointer-events: none;
 }}
-td {{padding: 7px 12px; border-bottom: 1px solid #e2e8f0;}}
-tr:nth-child(even) td {{background: #f1f5f9;}}
-.section {{
-    background: #fff; border-radius: 12px;
-    padding: 20px 24px; margin: 16px 0;
-    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+.hero-eyebrow {{
+    font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
+    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
+    position: relative; z-index: 1;
 }}
-.pill {{
-    display: inline-block; background: #dbeafe; color: #1d4ed8;
-    border-radius: 20px; padding: 3px 10px;
-    font-size: 12px; margin: 2px;
+.hero h1 {{
+    font-size: 40px; font-weight: 800; margin: 0 0 10px; line-height: 1.1;
+    letter-spacing: -0.5px; position: relative; z-index: 1;
 }}
-.opp-card {{
-    background: #f0fdf4; border: 1px solid #86efac;
-    border-radius: 8px; padding: 10px 14px;
-    margin: 6px 0; font-size: 13px;
+.hero-sub {{
+    font-size: 15px; opacity: 0.65; margin: 0 0 32px;
+    position: relative; z-index: 1;
 }}
-.exec-card {{
-    background: #fafafa; border: 1px solid #e2e8f0;
-    border-radius: 8px; padding: 14px 18px; margin: 10px 0;
+.hero-meta {{
+    display: flex; gap: 40px; position: relative; z-index: 1;
+    padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12);
 }}
-.driver {{
-    background: #f8fafc; border: 1px solid #e2e8f0;
-    border-radius: 8px; padding: 12px 16px; margin: 8px 0;
+.hero-meta-item {{ display: flex; flex-direction: column; gap: 3px; }}
+.hero-meta-label {{
+    font-size: 9px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; opacity: 0.5;
 }}
-.talking-point {{
-    background: {LIGHT_BLUE}; border-left: 4px solid {BLUE};
-    border-radius: 8px; padding: 16px 20px; margin: 16px 0;
-    font-size: 15px; line-height: 1.7;
-}}
-.talking-point strong {{color: {NAVY};}}
-blockquote {{
-    border-left: 3px solid {BLUE}; margin: 8px 0;
-    padding: 6px 14px; color: #475569; font-style: italic;
-}}
-pre {{
-    background: #f1f5f9; border-radius: 6px;
-    padding: 12px; font-size: 12px;
-    white-space: pre-wrap; word-wrap: break-word;
-}}
-.stool-grid {{
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 12px; margin: 16px 0;
-}}
-.stool-leg {{
-    border-radius: 10px; padding: 14px 16px;
-    border: 2px solid transparent;
-}}
-.stool-leg.empty {{
-    border: 2px dashed #ef4444;
-    background: #fef2f2;
-}}
-.stool-leg-title {{
-    font-size: 13px; font-weight: 700;
-    margin-bottom: 8px; color: #fff;
-    padding: 4px 10px; border-radius: 6px;
-    display: inline-block;
-}}
-.stool-person {{font-size: 13px; margin: 4px 0;}}
-.badge {{
-    display: inline-block; font-size: 11px;
-    padding: 2px 7px; border-radius: 10px;
-    margin-left: 4px; font-weight: 600;
-}}
-.badge-champion {{background: #fef9c3; color: #854d0e;}}
-.badge-eb {{background: #dcfce7; color: #166534;}}
+.hero-meta-value {{ font-size: 13px; font-weight: 600; }}
 .tab-nav {{
-    display: flex; gap: 8px;
-    flex-wrap: wrap; margin-bottom: 16px;
+    display: flex; gap: 6px; flex-wrap: wrap; padding: 20px 60px 0;
+    background: {NAVY}; position: sticky; top: 0; z-index: 100;
 }}
 .tab-btn {{
-    padding: 8px 18px; border-radius: 8px;
-    border: 1px solid #cbd5e1; background: #fff;
-    cursor: pointer; font-size: 14px; font-weight: 500;
+    padding: 10px 18px; border-radius: 8px 8px 0 0; border: none;
+    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.65);
+    cursor: pointer; font-size: 13px; font-weight: 500;
+    font-family: inherit; transition: all 0.15s;
 }}
-.tab-btn.active {{
-    background: {NAVY}; color: #fff; border-color: {NAVY};
+.tab-btn:hover {{ background: rgba(255,255,255,0.18); color: white; }}
+.tab-btn.active {{ background: white; color: {NAVY}; font-weight: 700; }}
+.tab-content {{ display: none; }}
+.tab-content.active {{ display: block; }}
+.content {{ padding: 52px 60px; }}
+.section-header {{
+    display: flex; align-items: center; gap: 14px;
+    margin: 44px 0 20px; padding-bottom: 14px;
+    border-bottom: 2px solid {LIGHT_BLUE};
 }}
-.tab-content {{display: none;}}
-.tab-content.active {{display: block;}}
-.account-section {{margin-bottom: 40px;}}
-.header-bar {{
-    background: linear-gradient(135deg, {NAVY}, {BLUE});
-    color: #fff; padding: 24px 32px;
-    border-radius: 12px; margin-bottom: 24px;
+.section-header:first-child {{ margin-top: 0; }}
+.section-icon {{
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, {BLUE}, #5b7fff);
+    border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; font-size: 20px; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(46,92,229,0.3);
 }}
-.header-bar h1 {{color: #fff; margin: 0;}}
-.header-bar p  {{margin: 4px 0; opacity: .85;}}
-.flag {{color: #ef4444; font-size: 12px; font-weight: 600;}}
+.section-title {{
+    font-size: 20px; font-weight: 700; color: {NAVY};
+    margin: 0; letter-spacing: -0.3px;
+}}
+.card {{
+    background: #f8faff; border: 1px solid #e2e8f8;
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 14px;
+}}
+.card-highlight {{
+    background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff);
+    border: 1px solid #c7d7f8; border-left: 4px solid {BLUE};
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 14px;
+}}
+.talking-point {{
+    background: linear-gradient(135deg, {NAVY} 0%, #1e3a8a 100%);
+    color: white; border-radius: 16px; padding: 32px 36px; margin: 28px 0;
+    position: relative; overflow: hidden;
+    box-shadow: 0 4px 24px rgba(29,45,80,0.25);
+}}
+.talking-point::before {{
+    content: '💡'; position: absolute; top: -16px; right: 24px;
+    font-size: 100px; opacity: 0.06; pointer-events: none;
+}}
+.talking-point-label {{
+    font-size: 9px; font-weight: 700; letter-spacing: 2.5px;
+    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
+}}
+.talking-point p {{
+    font-size: 15px; line-height: 1.75; margin: 0;
+    position: relative; z-index: 1; opacity: 0.95;
+}}
+.stool-grid {{
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0;
+}}
+.stool-leg {{
+    border-radius: 14px; padding: 20px; border: 1.5px solid #e2e8f8;
+    background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}}
+.stool-leg.empty {{ border: 2px dashed #fca5a5; background: #fff5f5; }}
+.stool-leg-header {{
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;
+}}
+.stool-leg-icon {{
+    width: 34px; height: 34px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+}}
+.stool-leg-name {{
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+}}
+.stool-person {{ padding: 8px 0; border-bottom: 1px solid #f8faff; }}
+.stool-person:last-child {{ border-bottom: none; padding-bottom: 0; }}
+.stool-person-name {{ font-weight: 600; color: {NAVY}; font-size: 13px; }}
+.stool-person-title {{ color: #64748b; font-size: 11px; margin-top: 2px; }}
+.badge {{
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 2px 8px; border-radius: 20px; margin-left: 6px;
+}}
+.badge-champion {{ background: #fef9c3; color: #854d0e; }}
+.badge-eb       {{ background: #dcfce7; color: #166534; }}
+table {{
+    width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;
+    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}}
+thead tr {{ background: {NAVY}; color: white; }}
+th {{
+    padding: 12px 16px; text-align: left; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase;
+}}
+td {{ padding: 11px 16px; border-bottom: 1px solid #f1f5f9; color: #334155; }}
+tr:last-child td {{ border-bottom: none; }}
+tr:nth-child(even) td {{ background: #f8faff; }}
+.signal-card {{
+    border: 1px solid #e2e8f8; border-left: 4px solid {BLUE};
+    border-radius: 10px; padding: 18px 22px; margin-bottom: 12px;
+    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}}
+.signal-card-title {{ font-weight: 700; color: {NAVY}; font-size: 14px; margin-bottom: 8px; }}
+.signal-card-meta {{ font-size: 12px; color: #64748b; margin-bottom: 8px; line-height: 1.5; }}
+.money-row {{ display: flex; gap: 8px; font-size: 12px; margin: 5px 0; color: #334155; line-height: 1.5; }}
+.opp-card {{
+    background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+    border: 1px solid #86efac; border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 10px; font-size: 13px;
+}}
+.exec-card {{
+    background: white; border: 1px solid #e2e8f8; border-radius: 12px;
+    padding: 20px 24px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}}
+.pill {{ display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
+.pill-blue   {{ background: {LIGHT_BLUE}; color: {BLUE}; }}
+.pill-green  {{ background: #dcfce7; color: #166534; }}
+.pill-orange {{ background: #ffedd5; color: #9a3412; }}
+.pill-red    {{ background: #fee2e2; color: #991b1b; }}
+.flag {{ color: #dc2626; font-size: 12px; font-weight: 600; }}
+@media print {{
+    body {{ background: white; font-size: 11px; }}
+    .page {{ max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; }}
+    .hero {{
+        padding: 36px 44px 30px;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }}
+    .content {{ padding: 36px 44px; }}
+    .tab-nav {{ display: none !important; }}
+    .tab-content {{ display: block !important; }}
+    .section-header {{ break-after: avoid; }}
+    .card, .card-highlight, .signal-card, .stool-grid,
+    .talking-point, .opp-card, .exec-card {{ break-inside: avoid; }}
+    table {{ break-inside: avoid; }}
+    .talking-point, .section-icon {{
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }}
+    .page-break {{ page-break-before: always; }}
+}}
 </style>
 """
 
 _JS = """
 <script>
-function showTab(accountSlug, tabId) {
-    document.querySelectorAll('.tab-content-' + accountSlug)
+function showTab(slug, tabId) {
+    document.querySelectorAll('.tab-content-' + slug)
             .forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn-' + accountSlug)
+    document.querySelectorAll('.tab-btn-' + slug)
             .forEach(el => el.classList.remove('active'));
-    document.getElementById(accountSlug + '_' + tabId)
+    document.getElementById(slug + '_' + tabId).classList.add('active');
+    document.querySelector('.tab-btn-' + slug + '[data-tab="' + tabId + '"]')
             .classList.add('active');
-    document.querySelector(
-        '.tab-btn-' + accountSlug + '[data-tab="' + tabId + '"]'
-    ).classList.add('active');
 }
 </script>
 """
 
 
-# ---------------------------------------------------------------------------
-# Section builders
-# ---------------------------------------------------------------------------
+def _section_header(icon: str, title: str) -> str:
+    return (
+        f"<div class='section-header'>"
+        f"<div class='section-icon'>{icon}</div>"
+        f"<h2 class='section-title'>{_e(title)}</h2>"
+        f"</div>"
+    )
+
+
+def _card(content: str, highlight: bool = False) -> str:
+    cls = "card-highlight" if highlight else "card"
+    return f"<div class='{cls}'>{content}</div>"
+
+
+def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
+    out  = f"<div class='signal-card'>"
+    out += f"<div class='signal-card-title'>{title}</div>"
+    if meta:
+        out += f"<div class='signal-card-meta'>{meta}</div>"
+    if bullets:
+        for b in bullets:
+            out += f"<div class='money-row'><span>{b}</span></div>"
+    out += "</div>"
+    return out
+
 
 def _company_overview_section(raw: dict) -> str:
     wr   = raw.get("web_research", {})
     desc = wr.get("description", {})
     news = wr.get("recent_news", [])
     prio = wr.get("strategic_priorities", [])
-    out  = ""
+    out  = _section_header("🏢", "Company Overview")
 
     desc_text = _text(desc)
     if desc_text:
-        out += f"<p>{_e(desc_text)}{_src_badge(desc)}</p>"
+        out += _card(
+            f"<p style='margin:0;font-size:14px;line-height:1.7;'>"
+            f"{_e(desc_text)}{_src_badge(desc)}</p>"
+        )
 
     if prio:
-        out += "<h4>Strategic Priorities</h4><ul>"
+        out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Strategic Priorities</h3>"
+        out += "<ul style='margin:0;padding-left:20px;'>"
         for p in prio[:5]:
-            out += f"<li>{_render_item(p)}</li>"
+            out += f"<li style='margin-bottom:6px;'>{_render_item(p)}</li>"
         out += "</ul>"
 
     if news:
-        out += "<h4>Recent News</h4><ul>"
+        out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Recent News</h3>"
         for n in news[:4]:
             if isinstance(n, dict):
                 headline = _e(n.get("headline", "") or n.get("title", ""))
                 url      = n.get("url", "") or n.get("source_url", "")
                 date     = _e(n.get("date", ""))
                 link     = (
-                    f"<a href='{_e(url)}' target='_blank'>{headline}</a>"
-                    if url else headline
+                    f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:600;'>{headline}</a>"
+                    if url else f"<b>{headline}</b>"
                 )
-                out += f"<li>{link}"
+                out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{link}"
                 if date:
-                    out += f" <span style='color:#6b7280;font-size:12px;'>({date})</span>"
-                out += "</li>"
+                    out += f" <span style='color:#94A3B8;font-size:11px;'>· {date}</span>"
+                out += "</div>"
             else:
-                out += f"<li>{_e(str(n))}</li>"
-        out += "</ul>"
+                out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
 
-    return out or "<p>No company overview data available.</p>"
+    return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
 
 
-def _four_leg_stool_section(
-    ts_data:      dict,
-    account_name: str,
-    raw:          dict = None,
-) -> str:
-    """
-    Build the 4-Leg Stool 2x2 HTML grid.
-
-    Source priority:
-    1. raw["exec_profiles"]["executives"] — has name + title (best source)
-    2. SFDC Executive Business Sponsor field — if populated
-    3. Gong champion/EB names from meddpicc_detail — badge only
-
-    Does NOT use Opportunity Owner Name (those are AE rep names, not contacts).
-    """
+def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) -> str:
     raw = raw or {}
-
-    # ── Source 1: exec profiles ────────────────────────────────────────────
     stakeholders = []
     ep    = raw.get("exec_profiles", {})
     execs = ep.get("executives", [])
@@ -421,157 +422,103 @@ def _four_leg_stool_section(
         title = exec_data.get("title", "")
         if name and name.strip():
             stakeholders.append({
-                "name":        name.strip(),
-                "title":       title or "",
-                "is_champion": False,
-                "is_eb":       False,
-                "source":      "exec_profiles",
+                "name": name.strip(), "title": title or "",
+                "is_champion": False, "is_eb": False, "source": "exec_profiles",
             })
 
-    # ── Source 2: SFDC exec sponsor ────────────────────────────────────────
     sfdc      = ts_data.get("sfdc_stakeholder", {})
     sfdc_rows = sfdc.get("data_rows", [])
     sfdc_cols = sfdc.get("column_names", [])
-
     exec_sponsor = ""
     if sfdc_rows and sfdc_cols:
-        rec = (
-            dict(zip(sfdc_cols, sfdc_rows[0]))
-            if isinstance(sfdc_rows[0], list) else sfdc_rows[0]
-        )
-        exec_sponsor = rec.get(
-            "Executive Business Sponsor [For Calculation]", ""
-        ) or ""
-
+        rec = dict(zip(sfdc_cols, sfdc_rows[0])) if isinstance(sfdc_rows[0], list) else sfdc_rows[0]
+        exec_sponsor = rec.get("Executive Business Sponsor [For Calculation]", "") or ""
         if exec_sponsor and exec_sponsor.strip():
             existing = {s["name"].lower() for s in stakeholders}
             if exec_sponsor.lower() not in existing:
                 stakeholders.append({
-                    "name":        exec_sponsor.strip(),
-                    "title":       "Executive Business Sponsor",
-                    "is_champion": False,
-                    "is_eb":       False,
-                    "source":      "sfdc",
+                    "name": exec_sponsor.strip(), "title": "Executive Business Sponsor",
+                    "is_champion": False, "is_eb": False, "source": "sfdc",
                 })
 
-    # ── Source 3: Gong champion / EB ──────────────────────────────────────
     medd      = ts_data.get("meddpicc_detail", {})
     medd_rows = medd.get("data_rows", [])
     medd_cols = medd.get("column_names", [])
-    champion_name = ""
-    eb_name       = ""
-
+    champion_name = eb_name = ""
     if medd_rows and medd_cols:
-        rec = (
-            dict(zip(medd_cols, medd_rows[0]))
-            if isinstance(medd_rows[0], list) else medd_rows[0]
-        )
+        rec = dict(zip(medd_cols, medd_rows[0])) if isinstance(medd_rows[0], list) else medd_rows[0]
         champion_name = rec.get("Opportunity Gong Champion", "") or ""
         eb_name       = rec.get("Opportunity Gong Economic Buyer", "") or ""
 
-    # Add Gong champion if not already present
     if champion_name and champion_name.strip():
         existing = {s["name"].lower() for s in stakeholders}
         if champion_name.lower() not in existing:
-            stakeholders.append({
-                "name":        champion_name.strip(),
-                "title":       "",
-                "is_champion": True,
-                "is_eb":       False,
-                "source":      "gong",
-            })
-
-    # Add Gong EB if not already present
+            stakeholders.append({"name": champion_name.strip(), "title": "", "is_champion": True, "is_eb": False, "source": "gong"})
     if eb_name and eb_name.strip():
         existing = {s["name"].lower() for s in stakeholders}
         if eb_name.lower() not in existing:
-            stakeholders.append({
-                "name":        eb_name.strip(),
-                "title":       "",
-                "is_champion": False,
-                "is_eb":       True,
-                "source":      "gong",
-            })
+            stakeholders.append({"name": eb_name.strip(), "title": "", "is_champion": False, "is_eb": True, "source": "gong"})
 
-    # Mark champion / EB badges on all stakeholders
     for s in stakeholders:
         if champion_name and champion_name.lower() in s["name"].lower():
             s["is_champion"] = True
         if eb_name and eb_name.lower() in s["name"].lower():
             s["is_eb"] = True
 
-    # ── Classify into legs ─────────────────────────────────────────────────
-    legs: dict = {
-        "DATA": [], "BUSINESS": [], "IT": [], "ANALYST": [], "UNKNOWN": []
-    }
+    legs: dict = {"DATA": [], "BUSINESS": [], "IT": [], "ANALYST": [], "UNKNOWN": []}
     for s in stakeholders:
-        leg = _classify_leg(s["title"])
-        legs[leg].append(s)
+        legs[_classify_leg(s["title"])].append(s)
 
-    # ── Build 2x2 grid ─────────────────────────────────────────────────────
     out = "<div class='stool-grid'>"
     for row_pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]:
         for leg_key in row_pair:
-            color     = LEG_COLORS[leg_key]
-            icon      = LEG_ICONS[leg_key]
-            contacts  = legs[leg_key]
-            is_empty  = len(contacts) == 0
-            leg_class = "stool-leg empty" if is_empty else "stool-leg"
-
-            out += f"<div class='{leg_class}' style='background:#f8fafc;'>"
+            color    = LEG_COLORS[leg_key]
+            icon     = LEG_ICONS[leg_key]
+            contacts = legs[leg_key]
+            is_empty = len(contacts) == 0
+            out += f"<div class='stool-leg{'  empty' if is_empty else ''}'>"
             out += (
-                f"<div class='stool-leg-title' style='background:{color};'>"
-                f"{icon} {_e(leg_key)}</div>"
+                f"<div class='stool-leg-header'>"
+                f"<div class='stool-leg-icon' style='background:{color}20;'>{icon}</div>"
+                f"<span class='stool-leg-name' style='color:{color};'>{_e(leg_key)}</span>"
+                f"</div>"
             )
-
             if is_empty:
-                out += "<p class='flag'>⚠️ No contact identified — add to target list</p>"
+                out += "<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified — add to target list</p>"
             else:
                 for contact in contacts:
                     out += "<div class='stool-person'>"
-                    out += f"<b>{_e(contact['name'])}</b>"
-                    if contact["title"]:
-                        out += (
-                            f"<br><span style='color:#64748b;font-size:12px;'>"
-                            f"{_e(contact['title'])}</span>"
-                        )
+                    out += f"<div class='stool-person-name'>{_e(contact['name'])}"
                     if contact["is_champion"]:
                         out += " <span class='badge badge-champion'>🏆 Champion</span>"
                     if contact["is_eb"]:
                         out += " <span class='badge badge-eb'>💰 EB</span>"
                     out += "</div>"
-
+                    if contact["title"]:
+                        out += f"<div class='stool-person-title'>{_e(contact['title'])}</div>"
+                    out += "</div>"
             out += "</div>"
-
     out += "</div>"
 
-    # Show unclassified contacts below grid
     if legs["UNKNOWN"]:
         out += (
-            "<p style='font-size:12px;color:#64748b;margin-top:8px;'>"
-            "⚠️ Unclassified (title not mapped to a leg): "
+            "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Unclassified: "
+            + ", ".join(_e(s["name"]) for s in legs["UNKNOWN"]) + "</p>"
         )
-        out += ", ".join(_e(s["name"]) for s in legs["UNKNOWN"])
-        out += "</p>"
-
-    # Show note if no stakeholders found at all
     if not stakeholders:
         out = (
             "<div class='stool-grid'>"
             + "".join(
-                f"<div class='stool-leg empty' style='background:#f8fafc;'>"
-                f"<div class='stool-leg-title' style='background:{LEG_COLORS[k]};'>"
-                f"{LEG_ICONS[k]} {k}</div>"
-                f"<p class='flag'>⚠️ No contact identified — add to target list</p>"
-                f"</div>"
-                for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]
-                for k in pair
+                f"<div class='stool-leg empty'>"
+                f"<div class='stool-leg-header'>"
+                f"<div class='stool-leg-icon' style='background:{LEG_COLORS[k]}20;'>{LEG_ICONS[k]}</div>"
+                f"<span class='stool-leg-name' style='color:{LEG_COLORS[k]};'>{k}</span></div>"
+                f"<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified</p></div>"
+                for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")] for k in pair
             )
             + "</div>"
-            + "<p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data available. "
-            + "Run Exec Profile Builder to populate this section.</p>"
+            + "<p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data. Run Exec Profile Builder.</p>"
         )
-
     return out
 
 
@@ -593,148 +540,127 @@ def _stakeholder_map_section(ts_data: dict) -> str:
         cs_name      = rec.get("Opportunity CS Name", "")
         exec_sponsor = rec.get("Executive Business Sponsor [For Calculation]", "")
 
-    champion_name  = ""
-    eb_name        = ""
-    champion_valid = False
-    eb_valid       = False
-
+    champion_name = eb_name = ""
+    champion_valid = eb_valid = False
     if medd_rows and medd_cols:
         rec = dict(zip(medd_cols, medd_rows[0])) if isinstance(medd_rows[0], list) else medd_rows[0]
         champion_name = rec.get("Opportunity Gong Champion", "")
         eb_name       = rec.get("Opportunity Gong Economic Buyer", "")
-
     if flag_rows and flag_cols:
         rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
         champion_valid = bool(rec.get("Opportunity Gong Champion Validated"))
         eb_valid       = bool(rec.get("Opportunity Gong Economic Buyer Validated"))
 
-    def _flag_if_empty(val, label):
-        if val and val.strip():
-            return _e(val)
-        return f"<span class='flag'>⚠️ {_e(label)} — prioritize discovery</span>"
+    def _fmt(val, label):
+        if val and val.strip(): return _e(val)
+        return f"<span class='flag'>⚠️ {_e(label)}</span>"
 
     if champion_valid and not champion_name:
-        champion_display = "<span class='flag'>⚠️ Champion validated in Gong but name not captured</span>"
+        champ_display = "<span class='flag'>⚠️ Validated in Gong but name not captured</span>"
     elif champion_name:
-        champion_display = _e(champion_name)
-        if not champion_valid:
-            champion_display += " <span class='flag'>(unconfirmed)</span>"
+        champ_display = _e(champion_name) + ("" if champion_valid else " <span class='flag'>(unconfirmed)</span>")
     else:
-        champion_display = "<span class='flag'>⚠️ No champion identified — prioritize discovery</span>"
+        champ_display = "<span class='flag'>⚠️ Not identified — prioritize discovery</span>"
 
     if eb_valid and not eb_name:
-        eb_display = "<span class='flag'>⚠️ EB validated in Gong but name not captured</span>"
+        eb_display = "<span class='flag'>⚠️ Validated in Gong but name not captured</span>"
     elif eb_name:
-        eb_display = _e(eb_name)
-        if not eb_valid:
-            eb_display += " <span class='flag'>(unconfirmed)</span>"
+        eb_display = _e(eb_name) + ("" if eb_valid else " <span class='flag'>(unconfirmed)</span>")
     else:
-        eb_display = "<span class='flag'>⚠️ No economic buyer identified — prioritize discovery</span>"
+        eb_display = "<span class='flag'>⚠️ Not identified — prioritize discovery</span>"
 
     crossref = ""
     if champion_name and exec_sponsor and champion_name.lower() != exec_sponsor.lower():
         crossref = (
-            f"<p class='flag'>⚠️ Gong Champion ({_e(champion_name)}) "
-            f"differs from SFDC Executive Sponsor ({_e(exec_sponsor)}) "
-            f"— verify alignment.</p>"
+            f"<div style='background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;"
+            f"border-radius:8px;padding:10px 14px;margin-top:12px;font-size:12px;color:#9a3412;'>"
+            f"⚠️ Gong Champion ({_e(champion_name)}) differs from SFDC Exec Sponsor ({_e(exec_sponsor)}) — verify.</div>"
         )
 
-    out  = "<table>"
-    out += "<tr><th>Role</th><th>Name</th></tr>"
-    out += f"<tr><td>🏆 Champion</td><td>{champion_display}</td></tr>"
+    out  = "<table><thead><tr><th>Role</th><th>Name</th></tr></thead><tbody>"
+    out += f"<tr><td>🏆 Champion</td><td>{champ_display}</td></tr>"
     out += f"<tr><td>💰 Economic Buyer</td><td>{eb_display}</td></tr>"
-    out += f"<tr><td>Executive Sponsor (SFDC)</td><td>{_flag_if_empty(exec_sponsor, 'No exec sponsor in SFDC')}</td></tr>"
-    out += f"<tr><td>Opportunity Owner</td><td>{_flag_if_empty(opp_owner, 'No opp owner found')}</td></tr>"
-    out += f"<tr><td>CS Name</td><td>{_flag_if_empty(cs_name, 'No CS assigned')}</td></tr>"
-    out += "</table>"
-    if crossref:
-        out += crossref
+    out += f"<tr><td>Executive Sponsor</td><td>{_fmt(exec_sponsor, 'Not in SFDC')}</td></tr>"
+    out += f"<tr><td>Opportunity Owner</td><td>{_fmt(opp_owner, 'Not found')}</td></tr>"
+    out += f"<tr><td>CS Name</td><td>{_fmt(cs_name, 'Not assigned')}</td></tr>"
+    out += "</tbody></table>" + crossref
     return out
 
 
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
-        return (
-            "<div class='talking-point'>"
-            "<span class='flag'>⚠️ No matched drivers — "
-            "talking point cannot be generated automatically. "
-            "Select a value driver manually.</span>"
-            "</div>"
-        )
+        return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
 
-    top_driver_key = (
-        matched_drivers[0].get("key", "")
-        if isinstance(matched_drivers[0], dict)
-        else matched_drivers[0]
-    )
-    signals        = get_money_signals(top_driver_key)
-    driver         = get_drivers(top_driver_key)
-    label          = driver.get("label", top_driver_key) if driver else top_driver_key
+    top_key        = matched_drivers[0].get("key", "") if isinstance(matched_drivers[0], dict) else matched_drivers[0]
+    signals        = get_money_signals(top_key)
+    driver         = get_drivers(top_key)
+    label          = driver.get("label", top_key) if driver else top_key
     money_in       = signals.get("money_in", [])
     money_out      = signals.get("money_out", [])
     pain_pts       = driver.get("pain_points", []) if driver else []
     financial_hook = money_in[0] if money_in else (money_out[0] if money_out else "")
     pain_signal    = pain_pts[0] if pain_pts else ""
-    flag           = (
-        "<br><span class='flag'>⚠️ No financial signal found — generic value used</span>"
-        if not financial_hook else ""
-    )
 
     ep        = raw.get("exec_profiles", {})
     execs     = ep.get("executives", [])
     exec_name = execs[0].get("name", "") if execs and isinstance(execs[0], dict) else ""
     addressee = _e(exec_name) if exec_name else f"your team at {_e(account_name)}"
 
-    out  = "<div class='talking-point'>"
-    out += f"<strong>💡 ThoughtSpot Talking Point — {_e(label)}</strong><br><br>"
+    tp_text = ""
     if pain_signal:
-        out += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
-    out += (
-        f"The way {addressee} is thinking about this space, "
-        f"there's a real opportunity to {_e(financial_hook.lower())}. "
-        f"That's exactly where ThoughtSpot tends to land — "
-        f"not as another BI tool, but as the layer that makes your "
-        f"data investment actually pay off. "
-        f"Worth a conversation to see if the timing is right?"
+        tp_text += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
+    if financial_hook:
+        tp_text += (
+            f"The way {addressee} is thinking about this space, "
+            f"there's a real opportunity to {_e(financial_hook.lower())}. "
+            f"That's exactly where ThoughtSpot tends to land — "
+            f"not as another BI tool, but as the layer that makes your "
+            f"data investment actually pay off. "
+            f"Worth a conversation to see if the timing is right?"
+        )
+    else:
+        tp_text += "<span style='color:#93C5FD;'>⚠️ No financial signal found — generic value used</span>"
+
+    return (
+        f"<div class='talking-point'>"
+        f"<div class='talking-point-label'>💡 Talking Point · {_e(label)}</div>"
+        f"<p>{tp_text}</p></div>"
     )
-    out += flag
-    out += "</div>"
-    return out
 
 
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
     if not roles:
-        return "<p>No role data available.</p>"
+        return "<p style='color:#94A3B8;'>No role data available.</p>"
 
     total  = t.get("total_open_roles", "")
     trends = t.get("hiring_trends", [])
     out    = ""
 
-    if total:
-        out += f"<p><b>Total Open Roles:</b> {_e(str(total))}</p>"
-    if trends:
-        out += "<p><b>Hiring Trends:</b></p><ul>"
-        for trend in trends[:3]:
-            out += f"<li>{_render_item(trend) if isinstance(trend, dict) else _e(str(trend))}</li>"
-        out += "</ul>"
+    if total or trends:
+        meta = f"<b>{total} open roles</b>" if total else ""
+        if trends:
+            trend_text = "; ".join(
+                (tr.get("trend", "") if isinstance(tr, dict) else str(tr))
+                for tr in trends[:2]
+            )
+            meta += (f" · {trend_text}" if meta else trend_text)
+        if meta:
+            out += _card(f"<p style='margin:0;font-size:13px;'>{meta}</p>")
 
-    out += "<table><thead><tr><th>Role</th><th>Department</th><th>Location</th><th>Date Posted</th><th>Source</th></tr></thead><tbody>"
+    out += "<table><thead><tr><th>Role</th><th>Dept</th><th>Location</th><th>Posted</th></tr></thead><tbody>"
     for r in roles[:10]:
         if isinstance(r, dict):
             title      = _e(r.get("title", ""))
             url        = r.get("url", "")
-            title_link = f"<a href='{_e(url)}' target='_blank'>{title} ↗</a>" if url else title
+            title_link = f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};'>{title} ↗</a>" if url else title
             out += (
-                f"<tr><td>{title_link}</td>"
-                f"<td>{_e(r.get('department', ''))}</td>"
-                f"<td>{_e(r.get('location', ''))}</td>"
-                f"<td>{_e(r.get('date_posted', ''))}</td>"
-                f"<td>{_e(r.get('source', ''))}</td></tr>"
+                f"<tr><td>{title_link}</td><td>{_e(r.get('department', ''))}</td>"
+                f"<td>{_e(r.get('location', ''))}</td><td>{_e(r.get('date_posted', ''))}</td></tr>"
             )
         else:
-            out += f"<tr><td>{_e(str(r))}</td><td></td><td></td><td></td><td></td></tr>"
+            out += f"<tr><td colspan='4'>{_e(str(r))}</td></tr>"
     out += "</tbody></table>"
     return out
 
@@ -746,54 +672,46 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
     disp_sum  = ci.get("displacement_summary", "")
 
     if not confirmed and not suspected and not disp_sum:
-        return "<p>No competitor data available.</p>"
+        return "<p style='color:#94A3B8;'>No competitor data available.</p>"
 
     out = ""
     if confirmed:
-        out += "<h4>Confirmed Tools</h4>"
         for t in confirmed:
             if not isinstance(t, dict):
-                out += f"<p>{_e(str(t))}</p>"
                 continue
             tool     = _e(t.get("tool", ""))
             evidence = _e(_text(t.get("evidence", "")))
-            angle    = _e(t.get("displacement_angle", "")) or "<span class='flag'>⚠️ No ThoughtSpot angle identified for this tool</span>"
+            angle    = _e(t.get("displacement_angle", ""))
             fit      = _e(t.get("thoughtspot_fit", ""))
             src      = _src_badge(t)
-            if not t.get("source"):
-                src += "<span class='flag'> ⚠️ Unconfirmed — inferred from limited source</span>"
-            out += "<div class='driver'>"
-            out += f"<b>{tool}</b>{src}<br>"
-            if evidence:
-                out += f"<p><i>Evidence:</i> {evidence}</p>"
-            if angle:
-                out += f"<p><i>ThoughtSpot Angle:</i> {angle}</p>"
-            if fit:
-                out += f"<p><i>Fit Signal:</i> {fit}</p>"
-            out += "</div>"
+            meta_parts = []
+            if evidence: meta_parts.append(f"<b>Evidence:</b> {evidence[:180]}{src}")
+            meta_parts.append(f"<b>TS Angle:</b> <span style='color:{BLUE};'>{angle}</span>" if angle else "<span class='flag'>⚠️ No ThoughtSpot angle identified</span>")
+            if fit: meta_parts.append(f"<b>Fit Signal:</b> <span style='color:#16A34A;'>{fit}</span>")
+            out += _signal_card(tool, "<br>".join(meta_parts))
 
     if suspected:
-        out += "<h4>Suspected Tools</h4><ul>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3>"
+        out += "<ul style='margin:0;padding-left:16px;'>"
         for t in suspected[:5]:
             if isinstance(t, dict):
+                conf = t.get("confidence", "")
+                pill_color = "pill-red" if conf == "high" else "pill-orange" if conf == "medium" else "pill-blue"
                 out += (
-                    f"<li><b>{_e(t.get('tool', ''))}</b> "
-                    f"(confidence: {_e(t.get('confidence', ''))}) {_src_badge(t)}"
+                    f"<li style='margin-bottom:6px;font-size:13px;'><b>{_e(t.get('tool', ''))}</b> "
+                    f"<span class='pill {pill_color}'>{conf}</span>"
                     f"{'— ' + _e(_text(t.get('evidence', ''))) if t.get('evidence') else ''}</li>"
                 )
-            else:
-                out += f"<li>{_e(str(t))}</li>"
         out += "</ul>"
 
     if disp_sum:
-        out += f"<p><b>Displacement Summary:</b> {_e(str(disp_sum))}</p>"
-
+        out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
 
 
 def _value_drivers_section(matched_drivers: list) -> str:
     if not matched_drivers:
-        return "<p>No value driver data available.</p>"
+        return "<p style='color:#94A3B8;'>No value driver data available.</p>"
 
     out = ""
     for m in matched_drivers:
@@ -801,32 +719,18 @@ def _value_drivers_section(matched_drivers: list) -> str:
         driver = get_drivers(key)
         if not driver:
             continue
-
-        label     = _e(driver.get("label", key))
+        label     = driver.get("label", key)
         pain_pts  = driver.get("pain_points", [])
         money_in  = driver.get("money_in", [])
         money_out = driver.get("money_out", [])
         evidence  = m.get("evidence", []) if isinstance(m, dict) else []
-
-        out += f"<div class='driver'><h4>{label}</h4>"
+        bullets   = [f"💰 {b}" for b in money_in[:2]] + [f"🛡️ {b}" for b in money_out[:2]]
+        meta = ""
         if evidence:
-            out += f"<p><i>Matched signals: {_e('; '.join(str(e) for e in evidence[:3]))}</i></p>"
+            meta += f"<span style='color:#64748b;font-size:11px;'>Matched: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
         if pain_pts:
-            out += f"<p><b>Pain addressed:</b> {_e(pain_pts[0])}</p>"
-        if money_in:
-            out += "<p><b>💰 Value In:</b></p><ul>"
-            for bullet in money_in[:2]:
-                out += f"<li>{_e(bullet)}</li>"
-            out += "</ul>"
-        if money_out:
-            out += "<p><b>🛡️ Risk Out:</b></p><ul>"
-            for bullet in money_out[:2]:
-                out += f"<li>{_e(bullet)}</li>"
-            out += "</ul>"
-        if not money_in and not money_out:
-            out += "<p class='flag'>⚠️ No financial signal found — generic value used</p>"
-        out += "</div>"
-
+            meta += f"<span style='color:#475569;font-size:12px;'>Pain: {_e(pain_pts[0])}</span>"
+        out += _signal_card(_e(label), meta, bullets)
     return out
 
 
@@ -839,9 +743,9 @@ def _deal_story_section(ts_data: dict) -> str:
     ft_cols   = ft_result.get("column_names", [])
 
     if not ds_rows:
-        return "<p>No deal story data available.</p>"
+        return "<p style='color:#94A3B8;'>No deal story data available.</p>"
 
-    out = "<div>"
+    out = ""
     for row in ds_rows[:3]:
         rec   = dict(zip(ds_cols, row)) if isinstance(row, list) else row
         name  = _e(rec.get("Opportunity Name", ""))
@@ -851,17 +755,21 @@ def _deal_story_section(ts_data: dict) -> str:
         pq    = rec.get("Opportunity Pipeline Qualified Flag", "")
 
         out += "<div class='opp-card'>"
-        out += f"<b>{name}</b>"
-        if stage: out += f" | Stage: {stage}"
-        if owner: out += f" | Owner: {owner}"
-        if pq:    out += " | <span style='color:#16a34a;'>✅ Pipeline Qualified</span>"
-        if date:  out += f"<br><span style='color:#64748b;font-size:12px;'>Last Activity: {date}</span>"
+        out += f"<b style='font-size:14px;color:{NAVY};'>{name}</b>"
+        if stage: out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
+        if pq:    out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
+        if owner or date:
+            out += f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>"
+            if owner: out += f"Owner: {owner}"
+            if owner and date: out += " · "
+            if date: out += f"Last activity: {date}"
+            out += "</div>"
         out += "</div>"
-    out += "</div>"
 
     if ft_rows:
         rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
-        out += "<h4>Funnel Timing</h4><table><thead><tr><th>Stage</th><th>Duration</th></tr></thead><tbody>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;'>Funnel Timing</h3>"
+        out += "<table><thead><tr><th>Stage</th><th>Duration</th></tr></thead><tbody>"
         for stage_key, label in [
             ("f Opportunity S1 Duration", "S1"),
             ("f Opportunity S2 Duration", "S2"),
@@ -873,40 +781,29 @@ def _deal_story_section(ts_data: dict) -> str:
             if val:
                 out += f"<tr><td>{label}</td><td>{_e(str(val))}</td></tr>"
         out += "</tbody></table>"
-
     return out
 
 
 def _activity_section(ts_data: dict) -> str:
-    act_result = ts_data.get("activity_history", {})
-    rows       = act_result.get("data_rows", [])
-    cols       = act_result.get("column_names", [])
-
+    rows = ts_data.get("activity_history", {}).get("data_rows", [])
+    cols = ts_data.get("activity_history", {}).get("column_names", [])
     if not rows:
-        return "<p>No activity history available.</p>"
+        return "<p style='color:#94A3B8;'>No activity history available.</p>"
 
-    out  = "<table><thead><tr>"
-    out += "<th>Date</th><th>Type</th><th>Prospect Contact</th><th>Subject</th><th>Owner</th>"
-    out += "</tr></thead><tbody>"
-
+    out  = "<table><thead><tr><th>Date</th><th>Type</th><th>Prospect</th><th>Subject</th><th>Owner</th></tr></thead><tbody>"
     for row in rows[:20]:
         rec  = dict(zip(cols, row)) if isinstance(row, list) else row
         out += (
             f"<tr>"
             f"<td>{_e(rec.get('Activity Time', '') or rec.get('Activity Created Date', ''))}</td>"
             f"<td>{_e(rec.get('Activity Type', ''))}</td>"
-            f"<td>Unknown Contact</td>"
+            f"<td style='color:#94A3B8;font-style:italic;'>Unknown Contact</td>"
             f"<td>{_e(rec.get('Activity Subject', ''))}</td>"
             f"<td>{_e(rec.get('Activity Owner Name', ''))}</td>"
             f"</tr>"
         )
-
     out += "</tbody></table>"
-    out += (
-        "<p style='color:#6b7280;font-size:12px;'>"
-        "⚠️ Prospect contact name requires SFDC contact matching — "
-        "showing 'Unknown Contact' where not resolved.</p>"
-    )
+    out += "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Prospect contact requires SFDC matching.</p>"
     return out
 
 
@@ -919,7 +816,7 @@ def _sales_call_section(ts_data: dict) -> str:
     det_cols  = detail.get("column_names", [])
 
     if not flag_rows and not det_rows:
-        return "<p>No sales call data available.</p>"
+        return "<p style='color:#94A3B8;'>No sales call data available.</p>"
 
     flag_rec = {}
     det_rec  = {}
@@ -944,25 +841,20 @@ def _sales_call_section(ts_data: dict) -> str:
     for flag_field, detail_field, label in gong_fields:
         validated   = flag_rec.get(flag_field, False)
         detail_text = det_rec.get(detail_field, "")
-        validated_display = (
-            "<span style='color:#16a34a;'>✅ Yes</span>"
-            if validated
-            else "<span style='color:#ef4444;'>❌ No</span>"
-        )
+        v_display   = "<span style='color:#16a34a;font-weight:700;'>✅ Yes</span>" if validated else "<span style='color:#94A3B8;'>❌ No</span>"
         if label in ("Champion", "Economic Buyer") and validated and not detail_text:
-            detail_display = f"<span class='flag'>⚠️ {label} validated in Gong but name not captured</span>"
+            d_display = f"<span class='flag'>⚠️ {label} validated but name not captured</span>"
         else:
-            detail_display = _e(detail_text) if detail_text else "—"
-        out += f"<tr><td>{_e(label)}</td><td>{validated_display}</td><td>{detail_display}</td></tr>"
+            d_display = _e(detail_text) if detail_text else "—"
+        out += f"<tr><td><b>{_e(label)}</b></td><td>{v_display}</td><td>{d_display}</td></tr>"
     out += "</tbody></table>"
     return out
 
 
 def _gong_calls_section(raw: dict) -> str:
-    """Render Gong call signals from sales_call_analyzer subagent output."""
     calls = raw.get("sales_calls", {})
     if not calls:
-        return "<p>No Gong call data available.</p>"
+        return "<p style='color:#94A3B8;'>No Gong call data available.</p>"
 
     signals    = calls.get("signals", [])
     next_steps = calls.get("consolidated_next_steps", [])
@@ -971,79 +863,73 @@ def _gong_calls_section(raw: dict) -> str:
     voicemail  = calls.get("voicemail_count", 0)
     no_content = calls.get("no_content_count", 0)
 
-    out  = f"<p><b>Total calls:</b> {total} | "
-    out += f"<b>Meaningful:</b> {meaningful} | "
-    out += f"<b>Voicemail:</b> {voicemail} | "
-    out += f"<b>No content:</b> {no_content}</p>"
+    out = _card(
+        f"<div style='display:flex;gap:32px;'>"
+        f"<div><div style='font-size:22px;font-weight:800;color:{NAVY};'>{total}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>Total</div></div>"
+        f"<div><div style='font-size:22px;font-weight:800;color:#16A34A;'>{meaningful}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>Meaningful</div></div>"
+        f"<div><div style='font-size:22px;font-weight:800;color:#D97706;'>{voicemail}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>Voicemail</div></div>"
+        f"<div><div style='font-size:22px;font-weight:800;color:#94A3B8;'>{no_content}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>No Content</div></div>"
+        f"</div>"
+    )
 
     if signals:
-        out += "<h4>Call Signals</h4>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Call Signals</h3>"
         for s in signals[:10]:
             if not isinstance(s, dict):
                 continue
-            sentiment = s.get("sentiment", "")
-            color = (
-                "#16a34a" if sentiment == "POSITIVE"
-                else "#ef4444" if sentiment == "NEGATIVE"
-                else "#d97706"
-            )
-            out += "<div class='driver'>"
-            out += (
-                f"<span style='color:{color};font-weight:700;'>{_e(sentiment)}</span>"
-                f" — <b>{_e(s.get('contact_name', '') or s.get('contact_email', ''))}</b>"
-            )
-            if s.get("call_name"):
-                out += f" | {_e(s['call_name'])}"
-            if s.get("brief_summary"):
-                out += f"<p>{_e(s['brief_summary'])}</p>"
-            if s.get("next_steps"):
-                out += f"<p><b>Next Steps:</b> {_e(s['next_steps'])}</p>"
-            if s.get("recommended_action"):
-                out += f"<p><b>Recommended Action:</b> {_e(s['recommended_action'])}</p>"
+            sentiment  = s.get("sentiment", "")
+            sent_color = "#16a34a" if sentiment == "POSITIVE" else "#ef4444" if sentiment == "NEGATIVE" else "#d97706"
+            contact    = _e(s.get("contact_name", "") or s.get("contact_email", ""))
+            call_name  = _e(s.get("call_name", ""))
+            summary    = _e(s.get("brief_summary", ""))
+            next_s     = _e(s.get("next_steps", ""))
+            action     = _e(s.get("recommended_action", ""))
+            out += "<div class='signal-card'>"
+            out += f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'>"
+            out += f"<span style='color:{sent_color};font-weight:700;'>{sentiment}</span>"
+            if contact: out += f"<b style='color:{NAVY};'>{contact}</b>"
+            if call_name: out += f"<span style='color:#94A3B8;font-size:11px;'>· {call_name}</span>"
+            out += "</div>"
+            if summary: out += f"<p style='margin:0 0 6px;font-size:13px;'>{summary}</p>"
+            if next_s:  out += f"<p style='margin:0 0 4px;font-size:12px;'><b>Next Steps:</b> {next_s}</p>"
+            if action:  out += f"<p style='margin:0;font-size:12px;color:{BLUE};'><b>→ {action}</b></p>"
             out += "</div>"
 
     if next_steps:
-        out += "<h4>Consolidated Next Steps</h4>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Consolidated Next Steps</h3>"
         out += "<table><thead><tr><th>Priority</th><th>Contact</th><th>Action</th><th>Owner</th></tr></thead><tbody>"
         for ns in next_steps:
             if not isinstance(ns, dict):
                 continue
             priority = ns.get("priority", "")
-            color = (
-                "#ef4444" if priority == "HIGH"
-                else "#d97706" if priority == "MED"
-                else "#6b7280"
-            )
+            p_color  = "#DC2626" if priority == "HIGH" else "#D97706" if priority == "MED" else "#94A3B8"
             out += (
                 f"<tr>"
-                f"<td><span style='color:{color};font-weight:700;'>{_e(priority)}</span></td>"
+                f"<td><span style='color:{p_color};font-weight:700;font-size:12px;'>{_e(priority)}</span></td>"
                 f"<td>{_e(ns.get('contact', ''))}</td>"
                 f"<td>{_e(ns.get('action', ''))}</td>"
-                f"<td>{_e(ns.get('owner', ''))}</td>"
-                f"</tr>"
+                f"<td>{_e(ns.get('owner', ''))}</td></tr>"
             )
         out += "</tbody></table>"
-
     return out
 
 
 def _6sense_section(ts_data: dict) -> str:
-    result = ts_data.get("6sense_intent", {})
-    rows   = result.get("data_rows", [])
-    cols   = result.get("column_names", [])
-
+    rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
+    cols = ts_data.get("6sense_intent", {}).get("column_names", [])
     if not rows:
-        return "<p>No 6Sense intent data available.</p>"
+        return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
 
-    out  = "<table><thead><tr><th>Account</th><th>Intent Grade</th><th>Reach Grade</th></tr></thead><tbody>"
+    out = "<table><thead><tr><th>Account</th><th>Intent Grade</th><th>Reach Grade</th></tr></thead><tbody>"
     for row in rows[:10]:
         rec = dict(zip(cols, row)) if isinstance(row, list) else row
+        intent_grade = _score_to_grade(rec.get("Person 6S Intent Score", ""))
+        reach_grade  = _score_to_grade(rec.get("Account Snapshot 6S Reach Score", ""))
+        grade_color  = "#16A34A" if "A" in intent_grade else "#D97706" if intent_grade == "B" else "#94A3B8"
         out += (
-            f"<tr>"
-            f"<td>{_e(rec.get('Account Name', ''))}</td>"
-            f"<td>{_e(_score_to_grade(rec.get('Person 6S Intent Score', '')))}</td>"
-            f"<td>{_e(_score_to_grade(rec.get('Account Snapshot 6S Reach Score', '')))}</td>"
-            f"</tr>"
+            f"<tr><td>{_e(rec.get('Account Name', ''))}</td>"
+            f"<td><span style='color:{grade_color};font-weight:700;font-size:16px;'>{_e(intent_grade)}</span></td>"
+            f"<td><span style='font-weight:600;'>{_e(reach_grade)}</span></td></tr>"
         )
     out += "</tbody></table>"
     return out
@@ -1052,43 +938,42 @@ def _6sense_section(ts_data: dict) -> str:
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
     if not studies:
-        return "<p>No case studies matched.</p>"
+        return "<p style='color:#94A3B8;'>No case studies matched.</p>"
 
-    out = "<ul style='list-style:none;padding:0;'>"
+    out = "<div style='display:flex;flex-direction:column;gap:12px;'>"
     for s in studies[:5]:
         if not isinstance(s, dict):
-            out += f"<li>{_e(str(s))}</li>"
             continue
         company = _e(s.get("company", ""))
         url     = s.get("url", "")
         why     = _e(s.get("why_chosen", ""))
         metric  = _e(s.get("key_metric", ""))
-        link    = f"<a href='{_e(url)}' target='_blank'>{company} ↗</a>" if url else company
-
-        out += "<li style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin:8px 0;'>"
-        out += f"<b>{link}</b>"
+        link    = (
+            f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:700;font-size:15px;'>{company} ↗</a>"
+            if url else f"<b style='font-size:15px;'>{company}</b>"
+        )
+        out += "<div class='card'>"
+        out += f"<div style='margin-bottom:8px;'>{link}</div>"
         if metric:
-            out += f"<div style='font-size:18px;font-weight:700;color:{BLUE};margin:6px 0;'>📊 {metric}</div>"
+            out += f"<div style='font-size:20px;font-weight:800;color:{BLUE};margin-bottom:8px;'>📊 {metric}</div>"
         if why:
-            out += f"<p><i>Why for {_e(account_name)}:</i> {why}</p>"
+            out += f"<p style='margin:0;font-size:12px;color:#475569;font-style:italic;'><b>Why for {_e(account_name)}:</b> {why}</p>"
         if not url:
-            out += "<span class='flag'>⚠️ No URL available for this case study</span>"
-        out += "</li>"
-    out += "</ul>"
+            out += "<span class='flag' style='font-size:11px;'>⚠️ No URL available</span>"
+        out += "</div>"
+    out += "</div>"
     return out
 
 
 def _exec_profiles_section(raw: dict) -> str:
     execs = raw.get("exec_profiles", {}).get("executives", [])
     if not execs:
-        return "<p>No executive profiles available.</p>"
+        return "<p style='color:#94A3B8;'>No executive profiles available.</p>"
 
     out = ""
     for exec_data in execs[:5]:
         if not isinstance(exec_data, dict):
-            out += f"<p>{_e(str(exec_data))}</p>"
             continue
-
         name     = _e(exec_data.get("name", ""))
         title    = _e(exec_data.get("title", ""))
         li_url   = exec_data.get("linkedin_url", "")
@@ -1097,45 +982,54 @@ def _exec_profiles_section(raw: dict) -> str:
         activity = exec_data.get("recent_activity", [])
 
         out += "<div class='exec-card'>"
-        out += f"<h4>{name}"
-        if title:   out += f" — {title}"
-        if li_url:  out += f" <a href='{_e(li_url)}' target='_blank' style='font-size:12px;'>LinkedIn ↗</a>"
-        out += "</h4>"
+        out += (
+            f"<div style='display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;'>"
+            f"<div><div style='font-weight:700;font-size:15px;color:{NAVY};'>{name}</div>"
+        )
+        if title:
+            out += f"<div style='font-size:12px;color:#64748b;margin-top:2px;'>{title}</div>"
+        out += "</div>"
+        if li_url:
+            out += f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};font-size:11px;font-weight:600;flex-shrink:0;'>LinkedIn ↗</a>"
+        out += "</div>"
 
         bio_text = _text(bio)
         if bio_text:
-            out += f"<p>{_e(bio_text)}{_src_badge(bio)}</p>"
+            out += f"<p style='font-size:13px;color:#334155;margin:0 0 10px;'>{_e(bio_text)}{_src_badge(bio)}</p>"
 
         if activity:
-            out += "<p><b>Recent Activity:</b></p><ul>"
+            out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;'>Recent Activity</p>"
+            out += "<ul style='margin:0;padding-left:16px;'>"
             for act in activity[:3]:
-                out += f"<li>{_render_item(act)}</li>"
+                out += f"<li style='font-size:12px;margin-bottom:4px;'>{_render_item(act)}</li>"
             out += "</ul>"
 
         if quotes:
-            out += "<p><b>Public Quotes:</b></p>"
+            out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px;'>Public Quotes</p>"
             for q in quotes[:2]:
                 if isinstance(q, dict):
                     quote_text = _e(q.get("quote", ""))
                     context    = _e(q.get("context", ""))
-                    src        = _src_badge(q)
                     if quote_text:
-                        out += f"<blockquote>{quote_text}{src}"
+                        out += (
+                            f"<blockquote style='border-left:3px solid {BLUE};margin:0 0 8px;"
+                            f"padding:8px 14px;background:#f8faff;border-radius:0 8px 8px 0;"
+                            f"font-size:13px;color:#334155;'>{quote_text}{_src_badge(q)}"
+                        )
                         if context:
-                            out += f"<br><span style='font-size:12px;color:#64748b;'>{context}</span>"
+                            out += f"<div style='font-size:11px;color:#94A3B8;margin-top:4px;'>{context}</div>"
                         out += "</blockquote>"
         out += "</div>"
-
     return out
 
 
 def _outreach_section(outreach_data: dict) -> str:
     if not outreach_data:
-        return "<p>Outreach sequences not yet generated.</p>"
+        return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
 
     sequences = outreach_data.get("sequences", [])
     if not sequences:
-        return "<p>No outreach sequences available.</p>"
+        return "<p style='color:#94A3B8;'>No outreach sequences available.</p>"
 
     out = ""
     for seq in sequences:
@@ -1147,59 +1041,53 @@ def _outreach_section(outreach_data: dict) -> str:
         li_msgs = seq.get("linkedin_messages", [])
 
         out += "<div class='exec-card'>"
-        out += f"<h4>✉️ {name}"
-        if title: out += f" — {title}"
-        out += "</h4>"
-
-        if emails:
-            out += "<p><b>Email Sequence:</b></p>"
-            for i, email in enumerate(emails, 1):
-                if isinstance(email, dict):
-                    out += f"<p><b>Email {i}: {_e(email.get('subject', f'Email {i}'))}</b></p>"
-                    out += f"<pre>{_e(email.get('body', ''))}</pre>"
-                else:
-                    out += f"<pre>{_e(str(email))}</pre>"
-
-        if li_msgs:
-            out += "<p><b>LinkedIn Sequence:</b></p>"
-            for i, msg in enumerate(li_msgs, 1):
-                if isinstance(msg, dict):
-                    out += f"<p><b>LinkedIn {i}:</b></p>"
-                    out += f"<pre>{_e(msg.get('body', '') or msg.get('message', ''))}</pre>"
-                else:
-                    out += f"<pre>{_e(str(msg))}</pre>"
-
+        out += f"<div style='font-weight:700;font-size:15px;color:{NAVY};margin-bottom:4px;'>✉️ {name}"
+        if title:
+            out += f" <span style='font-weight:400;font-size:13px;color:#64748b;'>— {title}</span>"
         out += "</div>"
 
+        if emails:
+            out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>Email Sequence</p>"
+            for i, email in enumerate(emails, 1):
+                if isinstance(email, dict):
+                    subj = _e(email.get("subject", f"Email {i}"))
+                    body = _e(email.get("body", ""))
+                    out += f"<div style='margin-bottom:12px;'><b style='font-size:13px;color:{NAVY};'>Email {i}: {subj}</b>"
+                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre></div>"
+                else:
+                    out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(email))}</pre>"
+
+        if li_msgs:
+            out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>LinkedIn Sequence</p>"
+            for i, msg in enumerate(li_msgs, 1):
+                if isinstance(msg, dict):
+                    body = _e(msg.get("body", "") or msg.get("message", ""))
+                    out += f"<div style='margin-bottom:10px;'><b style='font-size:13px;color:{NAVY};'>LinkedIn {i}</b>"
+                    out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre></div>"
+                else:
+                    out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
+        out += "</div>"
     return out
 
 
-# ---------------------------------------------------------------------------
-# Tab definitions
-# ---------------------------------------------------------------------------
-
 def _get_tabs(phase: int) -> list:
     tabs = [
-        ("overview",      "Company Overview"),
-        ("stakeholders",  "Stakeholders"),
-        ("why_ts",        "Why ThoughtSpot"),
-        ("competitor",    "Competitor Intel"),
-        ("deal_story",    "Deal Story"),
-        ("sales_call",    "Sales Call Analysis"),
-        ("gong_calls",    "Gong Call Signals"),
-        ("6sense",        "6Sense Intent"),
-        ("roles",         "Hiring Signals"),
-        ("case_studies",  "Case Studies"),
-        ("exec_profiles", "Exec Profiles"),
+        ("overview",      "🏢 Overview"),
+        ("stakeholders",  "👥 Stakeholders"),
+        ("why_ts",        "🎯 Why ThoughtSpot"),
+        ("competitor",    "🔍 Competitors"),
+        ("deal_story",    "📋 Deal Story"),
+        ("sales_call",    "📞 Sales Signals"),
+        ("gong_calls",    "🎙 Gong Calls"),
+        ("6sense",        "📡 6Sense"),
+        ("roles",         "💼 Hiring"),
+        ("case_studies",  "📚 Case Studies"),
+        ("exec_profiles", "🧑 Exec Profiles"),
     ]
     if phase == 2:
-        tabs.append(("outreach", "Outreach"))
+        tabs.append(("outreach", "✉️ Outreach"))
     return tabs
 
-
-# ---------------------------------------------------------------------------
-# HTML page wrapper
-# ---------------------------------------------------------------------------
 
 def _build_html_page(title: str, body: str) -> str:
     return (
@@ -1208,20 +1096,12 @@ def _build_html_page(title: str, body: str) -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_e(title)}</title>"
         + _CSS
-        + "</head><body><div class='container'>"
+        + "</head><body>"
         + body
         + _JS
-        + "</div></body></html>"
+        + "</body></html>"
     )
 
-
-# ---------------------------------------------------------------------------
-# last line of Part 1 — _build_outreach_section ends above
-# Part 2 starts below with build_pg_report()
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Primary public function — internal PG report
-# ---------------------------------------------------------------------------
 
 def build_pg_report(
     slug:            str,
@@ -1235,30 +1115,27 @@ def build_pg_report(
     output_dir:      str  = "/sandbox",
 ) -> dict:
     """
-    Build a PG report HTML string.
-
-    Returns
-    -------
-    dict with keys:
-        filename : str  — suggested filename
-        html     : str  — complete HTML string ready to deliver
-        slug     : str  — account slug
-        phase    : int  — 1 (draft) or 2 (final)
+    Build a PG report HTML string with full ThoughtSpot branding.
+    Returns {"filename", "html", "slug", "phase"}
     """
     outreach_data = outreach_data or {}
     tabs          = _get_tabs(phase)
     owner         = header_data.get("owner_name", "AE")
     region        = header_data.get("region", "")
-    now           = datetime.datetime.utcnow().strftime("%B %d, %Y %H:%M UTC")
+    now           = datetime.datetime.utcnow().strftime("%B %d, %Y")
 
-    body  = "<div class='header-bar'>"
-    body += f"<h1>PG Report — {_e(account_name)}</h1>"
-    body += f"<p>Prepared by: {_e(owner)}"
+    body  = "<div class='page'>"
+    body += "<div class='hero'>"
+    body += "<div class='hero-eyebrow'>Account Intelligence Report</div>"
+    body += f"<h1>{_e(account_name)}</h1>"
+    body += f"<p class='hero-sub'>ThoughtSpot PG Plan · {'Phase 1 Draft' if phase == 1 else 'Phase 2 Final'}</p>"
+    body += "<div class='hero-meta'>"
+    body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Prepared By</span><span class='hero-meta-value'>{_e(owner)}</span></div>"
     if region:
-        body += f" | {_e(region)}"
-    body += f"</p><p style='font-size:12px;opacity:.7;'>Generated {now}</p>"
-    body += "</div>"
-    body += f"<div class='account-section' id='{_e(slug)}'>"
+        body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Region</span><span class='hero-meta-value'>{_e(region)}</span></div>"
+    body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Generated</span><span class='hero-meta-value'>{now}</span></div>"
+    body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Status</span><span class='hero-meta-value'>{'📄 Draft' if phase == 1 else '✅ Final'}</span></div>"
+    body += "</div></div>"
 
     body += "<div class='tab-nav'>"
     for i, (tab_id, tab_label) in enumerate(tabs):
@@ -1271,72 +1148,78 @@ def build_pg_report(
         )
     body += "</div>"
 
+    body += "<div class='content'>"
     for i, (tab_id, _) in enumerate(tabs):
         active = "active" if i == 0 else ""
         body += (
             f"<div id='{_e(slug)}_{_e(tab_id)}' "
             f"class='tab-content tab-content-{_e(slug)} {active}'>"
-            f"<div class='section'>"
         )
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
 
         elif tab_id == "stakeholders":
-            body += "<h3>4-Leg Stool</h3>"
+            body += _section_header("👥", "4-Leg Stool")
             body += _four_leg_stool_section(ts_data, account_name, raw)
-            body += "<h3>Stakeholder Map</h3>"
+            body += _section_header("🗺️", "Stakeholder Map")
             body += _stakeholder_map_section(ts_data)
-            body += "<h3>ThoughtSpot Talking Point</h3>"
+            body += _section_header("💡", "ThoughtSpot Talking Point")
             body += _talking_point_section(account_name, matched_drivers, raw)
 
         elif tab_id == "why_ts":
+            body += _section_header("🎯", "Why ThoughtSpot")
             body += _value_drivers_section(matched_drivers)
 
         elif tab_id == "competitor":
+            body += _section_header("🔍", "Competitor Landscape")
             body += _competitor_section(raw, matched_drivers)
 
         elif tab_id == "deal_story":
+            body += _section_header("📋", "Deal Story")
             body += _deal_story_section(ts_data)
 
         elif tab_id == "sales_call":
+            body += _section_header("📞", "Sales Call Analysis")
             body += _sales_call_section(ts_data)
-            body += "<h3>Activity History</h3>"
+            body += _section_header("📅", "Activity History")
             body += _activity_section(ts_data)
 
         elif tab_id == "gong_calls":
+            body += _section_header("🎙", "Gong Call Signals")
             body += _gong_calls_section(raw)
 
         elif tab_id == "6sense":
+            body += _section_header("📡", "6Sense Intent")
             body += _6sense_section(ts_data)
 
         elif tab_id == "roles":
+            body += _section_header("💼", "Hiring Signals")
             body += _hiring_signals_section(raw)
 
         elif tab_id == "case_studies":
+            body += _section_header("📚", "Recommended Case Studies")
             body += _case_studies_section(raw, account_name)
 
         elif tab_id == "exec_profiles":
+            body += _section_header("🧑", "Executive Profiles")
             body += _exec_profiles_section(raw)
 
         elif tab_id == "outreach":
+            body += _section_header("✉️", "Outreach Sequences")
             body += _outreach_section(outreach_data)
 
-        body += "</div></div>"
+        body += "</div>"
 
-    body += "</div>"
+    body += "</div></div>"
 
     suffix   = "draft" if phase == 1 else "final"
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.2] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.3] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
 
-
-# ---------------------------------------------------------------------------
-# One-pager builder — external, customer-facing
-# ---------------------------------------------------------------------------
 
 def build_onepager(
     slug:            str,
@@ -1346,21 +1229,9 @@ def build_onepager(
     output_dir:      str = "/sandbox",
 ) -> dict:
     """
-    Build an external customer-facing one-pager HTML string.
-
-    One-pager rules (non-negotiable):
-    - No stakeholder names, titles, or internal role labels
-    - No MEDDPICC terminology, deal stage, or SFDC references
-    - No Voltron, AE name, internal tools, or session metadata
-    - Content: company context → challenges → TS value → proof → demo CTA
-    - Demo CTA: always https://www.thoughtspot.com/demo
-
-    Returns
-    -------
-    dict with keys:
-        filename : str
-        html     : str
-        slug     : str
+    Build an external customer-facing one-pager.
+    No internal data. ThoughtSpot-branded design.
+    Returns {"filename", "html", "slug"}
     """
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
@@ -1368,8 +1239,7 @@ def build_onepager(
     pain_pts = wr.get("pain_points", [])
     studies  = cs_data.get("recommended_case_studies", [])
 
-    challenges = [_text(p) for p in pain_pts[:4] if _text(p)]
-
+    challenges       = [_text(p) for p in pain_pts[:4] if _text(p)]
     value_statements = []
     for m in matched_drivers[:4]:
         key    = m.get("key", "") if isinstance(m, dict) else m
@@ -1392,30 +1262,121 @@ def build_onepager(
 
     onepager_css = f"""
 <style>
-*, *::before, *::after {{box-sizing: border-box;}}
-body {{font-family: 'Inter', 'Segoe UI', sans-serif; margin: 0; padding: 0; background: {WHITE}; color: #1e293b;}}
-.page {{max-width: 800px; margin: 0 auto; padding: 40px 48px;}}
-.hero {{background: linear-gradient(135deg, {NAVY}, {BLUE}); color: #fff; padding: 32px 40px; border-radius: 12px; margin-bottom: 32px;}}
-.hero h1 {{font-size: 26px; font-weight: 700; margin: 0 0 8px; color: #fff;}}
-.hero p {{margin: 0; opacity: .85; font-size: 15px;}}
-h2 {{font-size: 18px; font-weight: 700; color: {NAVY}; margin: 28px 0 12px; border-bottom: 2px solid {BLUE}; padding-bottom: 6px;}}
-ul {{padding-left: 20px; margin: 8px 0;}}
-li {{margin: 6px 0; line-height: 1.6;}}
-.value-card {{background: {LIGHT_BLUE}; border-radius: 8px; padding: 12px 16px; margin: 8px 0; border-left: 4px solid {BLUE}; font-size: 14px; line-height: 1.6;}}
-.proof-card {{background: #f0fdf4; border-radius: 8px; padding: 12px 16px; margin: 8px 0; border-left: 4px solid #16a34a; font-size: 14px; font-weight: 600;}}
-.cta {{background: {BLUE}; color: #fff; border-radius: 10px; padding: 24px 32px; text-align: center; margin-top: 32px;}}
-.cta a {{color: #fff; font-size: 18px; font-weight: 700; text-decoration: none;}}
-.cta p {{color: #fff; opacity: .85; margin: 8px 0 0;}}
-@media print {{body {{background: #fff;}} .cta {{background: {NAVY};}}}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+*, *::before, *::after {{ box-sizing: border-box; }}
+body {{
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    margin: 0; padding: 0; background: #f0f4ff;
+    color: #0f172a; font-size: 14px; line-height: 1.6;
+}}
+.page {{
+    max-width: 800px; margin: 40px auto; background: white;
+    border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden;
+}}
+.hero {{
+    background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%);
+    padding: 52px 56px 44px; color: white; position: relative; overflow: hidden;
+}}
+.hero::before {{
+    content: ''; position: absolute; top: -80px; right: -80px;
+    width: 360px; height: 360px;
+    background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%);
+    pointer-events: none;
+}}
+.hero-eyebrow {{
+    font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
+    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
+    position: relative; z-index: 1;
+}}
+.hero h1 {{
+    font-size: 36px; font-weight: 800; margin: 0 0 10px; line-height: 1.1;
+    letter-spacing: -0.5px; position: relative; z-index: 1;
+}}
+.hero-sub {{
+    font-size: 15px; opacity: 0.7; margin: 0; position: relative; z-index: 1;
+}}
+.content {{ padding: 48px 56px; }}
+h2 {{
+    font-size: 18px; font-weight: 700; color: {NAVY};
+    margin: 36px 0 16px; padding-bottom: 10px;
+    border-bottom: 2px solid {LIGHT_BLUE}; letter-spacing: -0.2px;
+}}
+h2:first-of-type {{ margin-top: 0; }}
+ul {{ padding-left: 0; margin: 0; list-style: none; }}
+li {{
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-bottom: 10px; font-size: 14px; line-height: 1.6; color: #334155;
+}}
+li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; margin-top: 1px; }}
+.value-card {{
+    background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff);
+    border: 1px solid #c7d7f8; border-left: 4px solid {BLUE};
+    border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
+    font-size: 13px; line-height: 1.65; color: #1e3a5f;
+}}
+.proof-card {{
+    background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+    border: 1px solid #86efac; border-left: 4px solid #16a34a;
+    border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
+    font-size: 14px; font-weight: 600; color: #14532d;
+    display: flex; align-items: center; gap: 10px;
+}}
+.cta {{
+    background: linear-gradient(135deg, {NAVY}, {BLUE});
+    color: white; border-radius: 14px; padding: 32px 40px;
+    text-align: center; margin-top: 40px;
+    position: relative; overflow: hidden;
+}}
+.cta::before {{
+    content: ''; position: absolute; top: -40px; right: -40px;
+    width: 200px; height: 200px;
+    background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+}}
+.cta-label {{
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; opacity: 0.6; margin-bottom: 12px;
+}}
+.cta a {{
+    display: inline-block; color: white; font-size: 20px;
+    font-weight: 800; text-decoration: none; letter-spacing: -0.3px;
+    position: relative; z-index: 1;
+}}
+.cta p {{ color: rgba(255,255,255,0.7); font-size: 13px; margin: 10px 0 0; position: relative; z-index: 1; }}
+.footer {{
+    padding: 20px 56px; background: #f8faff;
+    border-top: 1px solid #e2e8f8;
+    display: flex; align-items: center; justify-content: space-between;
+}}
+.footer-logo {{ font-size: 13px; font-weight: 700; color: {NAVY}; letter-spacing: -0.3px; }}
+.footer-tagline {{ font-size: 11px; color: #94A3B8; }}
+@media print {{
+    body {{ background: white; font-size: 12px; }}
+    .page {{ max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; }}
+    .hero {{
+        padding: 36px 44px 30px;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }}
+    .content {{ padding: 36px 44px; }}
+    .cta {{
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        break-inside: avoid;
+    }}
+    .value-card, .proof-card {{ break-inside: avoid; }}
+    .footer {{ padding: 16px 44px; }}
+}}
 </style>
 """
 
     body  = "<div class='page'>"
     body += "<div class='hero'>"
+    body += "<div class='hero-eyebrow'>ThoughtSpot · Account Brief</div>"
     body += f"<h1>{_e(account_name)}</h1>"
     if desc:
-        body += f"<p>{_e(desc[:200])}</p>"
+        body += f"<p class='hero-sub'>{_e(desc[:180])}</p>"
     body += "</div>"
+
+    body += "<div class='content'>"
 
     if challenges:
         body += "<h2>Business Challenges</h2><ul>"
@@ -1432,7 +1393,7 @@ li {{margin: 6px 0; line-height: 1.6;}}
             "<h2>How ThoughtSpot Helps</h2>"
             "<div class='value-card'>"
             "ThoughtSpot delivers AI-powered analytics that help business "
-            "teams get answers from data instantly — no SQL required."
+            "teams get answers from data instantly — no SQL, no waiting."
             "</div>"
         )
 
@@ -1443,11 +1404,22 @@ li {{margin: 6px 0; line-height: 1.6;}}
 
     body += (
         "<div class='cta'>"
+        "<div class='cta-label'>Ready to see it in action?</div>"
         "<a href='https://www.thoughtspot.com/demo' target='_blank'>"
-        "See ThoughtSpot in Action →</a>"
-        "<p>Request a personalized demo at thoughtspot.com/demo</p>"
+        "Request a Demo →</a>"
+        "<p>thoughtspot.com/demo</p>"
         "</div>"
     )
+
+    body += "</div>"
+
+    body += (
+        "<div class='footer'>"
+        f"<span class='footer-logo'>ThoughtSpot</span>"
+        f"<span class='footer-tagline'>AI-Powered Analytics</span>"
+        "</div>"
+    )
+
     body += "</div>"
 
     filename = f"{slug}_onepager.html"
@@ -1462,5 +1434,5 @@ li {{margin: 6px 0; line-height: 1.6;}}
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.2] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.3] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
