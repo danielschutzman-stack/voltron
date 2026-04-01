@@ -1199,8 +1199,86 @@ def _exec_profiles_section(raw: dict) -> str:
                         out += "</blockquote>"
         out += "</div>"
     return out
+def _normalize_outreach(outreach_data: dict) -> dict:
+    """
+    Normalize outreach data to standard schema regardless of
+    what shape the subagent returned.
 
+    Standard schema:
+      {"sequences": [{"contact_name", "contact_title",
+                       "emails": [{"subject", "body", "claim_annotations"}],
+                       "linkedin_messages": [{"body", "claim_annotations"}]}]}
+
+    Handles alternate shape:
+      {"contacts": [...], "sequences": {"email_1": ..., "linkedin_1": ...}}
+    """
+    if not outreach_data:
+        return {}
+
+    # Already correct shape — sequences is a list
+    if "sequences" in outreach_data and isinstance(outreach_data["sequences"], list):
+        return outreach_data
+
+    # Handle contacts[].sequences.email_1 shape
+    if "contacts" in outreach_data:
+        seq_data = outreach_data.get("sequences", {})
+        sequences = []
+        for contact in outreach_data.get("contacts", []):
+            emails  = []
+            li_msgs = []
+            if isinstance(seq_data, dict):
+                for key in sorted(seq_data.keys()):
+                    item = seq_data[key]
+                    if key.startswith("email"):
+                        if isinstance(item, str):
+                            emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
+                        elif isinstance(item, dict):
+                            if "claim_annotations" not in item:
+                                item["claim_annotations"] = []
+                            emails.append(item)
+                    elif key.startswith("linkedin"):
+                        if isinstance(item, str):
+                            li_msgs.append({"body": item, "claim_annotations": []})
+                        elif isinstance(item, dict):
+                            if "claim_annotations" not in item:
+                                item["claim_annotations"] = []
+                            li_msgs.append(item)
+            sequences.append({
+                "contact_name":      contact.get("name", ""),
+                "contact_title":     contact.get("title", ""),
+                "contact_linkedin":  contact.get("linkedin_url", ""),
+                "emails":            emails,
+                "linkedin_messages": li_msgs,
+            })
+        return {"sequences": sequences}
+
+    # Handle flat sequences dict (email_1, email_2 at top level)
+    if any(k.startswith("email") for k in outreach_data.keys()):
+        emails  = []
+        li_msgs = []
+        for key in sorted(outreach_data.keys()):
+            item = outreach_data[key]
+            if key.startswith("email"):
+                if isinstance(item, str):
+                    emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
+                elif isinstance(item, dict):
+                    if "claim_annotations" not in item:
+                        item["claim_annotations"] = []
+                    emails.append(item)
+            elif key.startswith("linkedin"):
+                if isinstance(item, str):
+                    li_msgs.append({"body": item, "claim_annotations": []})
+                elif isinstance(item, dict):
+                    if "claim_annotations" not in item:
+                        item["claim_annotations"] = []
+                    li_msgs.append(item)
+        return {"sequences": [{"contact_name": "", "contact_title": "",
+                               "emails": emails, "linkedin_messages": li_msgs}]}
+
+    return outreach_data
+    
 def _outreach_section(outreach_data: dict) -> str:
+    outreach_data = _normalize_outreach(outreach_data)  # ← add this line
     if not outreach_data:
         return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
 
