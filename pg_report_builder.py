@@ -1068,6 +1068,36 @@ def _outreach_section(outreach_data: dict) -> str:
     return out
 
 
+def _gong_calls_section(raw: dict) -> str:
+    
+    return out
+
+
+def _6sense_section(ts_data: dict) -> str:
+    
+    return out
+
+
+def _case_studies_section(raw: dict, account_name: str) -> str:
+    
+
+
+def _exec_profiles_section(raw: dict) -> str:
+    
+
+
+def _normalize_outreach(outreach_data: dict) -> dict:
+    
+
+
+def _render_claim_annotations(annotations: list) -> str:
+    
+
+
+def _outreach_section(outreach_data: dict) -> str:
+    
+
+
 def _get_tabs(phase: int) -> list:
     tabs = [
         ("overview",      "🏢 Overview"),
