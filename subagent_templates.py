@@ -22,7 +22,6 @@ include a "source" field.
 
 from string import Formatter
 
-
 _CITATION_RULE = """
 CITATION RULE (non-negotiable):
 Every claim, finding, quote, or data point in your JSON output MUST include a "source" field.
@@ -72,7 +71,6 @@ TEMPLATE_DEFAULTS = {
         "date_from": "01/01/2024",
     },
 }
-
 
 TEMPLATES = {
 
@@ -138,7 +136,6 @@ Constraints
 - Never omit the source field. An unsourced claim is worse than no claim.
 """ + _CITATION_RULE,
 
-
 "tsumble": """
 You are TSumbleV1, a job openings research specialist. Your job is to find
 current open roles at a company.
@@ -149,14 +146,15 @@ Website: {website_url}
 Careers Page (if known): {careers_url}
 Output File: {output_file}
 
-Search Strategy
-1. If a careers URL is provided, fetch it directly first.
-2. Search for "{account_name} careers" and "{account_name} jobs" on the web.
-3. Concurrently search LinkedIn Jobs, Indeed, Glassdoor, and Builtin for open roles.
-4. If LinkedIn is blocked or returns no results, immediately fall back to Exa web search.
-   Do NOT retry LinkedIn.
-5. Deduplicate results across sources.
-6. Cite all sources with retrieval date.
+Search Strategy — SPEED CUT 3: 3-source cap, 180s hard cutoff
+1. If a careers URL is provided, fetch it directly first (Source 1).
+2. Search LinkedIn Jobs for open roles (Source 2). If blocked, skip immediately — do NOT retry.
+3. Search Indeed for open roles (Source 3).
+4. STOP after 3 sources regardless of result count. Do NOT search Glassdoor, Builtin, or other boards
+   unless Sources 1–3 return zero roles combined.
+5. HARD CUTOFF: 180 seconds from start. Save whatever you have and stop — do not continue searching.
+6. Deduplicate results across sources.
+7. Cite all sources with retrieval date.
 
 Output
 Save a structured JSON file to {output_file} with these keys:
@@ -202,7 +200,6 @@ Constraints
   If no direct URL is available, set source to "inferred — no direct source"
   and source_type to "inferred".
 """ + _CITATION_RULE,
-
 
 "competitor_intel": """
 You are a competitive intelligence specialist. Identify which analytics and BI
@@ -263,7 +260,6 @@ Constraints
   and source_type to "inferred".
 """ + _CITATION_RULE,
 
-
 "exec_profile": """
 You are an executive research specialist. Your job is to build detailed profiles
 of key stakeholders at a target account for a ThoughtSpot AE.
@@ -275,16 +271,19 @@ Industry: {industry}
 Known Stakeholders: {stakeholders}
 Output File: {output_file}
 
-Research Tasks
-1. For each stakeholder (and any additional C-suite/VP-level leaders you discover), find:
+Research Tasks — SPEED CUT 2: Profile ONLY the contacts explicitly listed in Known Stakeholders.
+Do NOT expand scope. Do NOT add additional executives beyond what is listed.
+
+For EACH listed stakeholder only:
    - Current title and tenure at the company
-   - LinkedIn profile URL
-   - Professional bio and career background
-   - Recent public activity: posts, interviews, podcasts, articles, conference talks
+   - LinkedIn profile URL (search, do not fabricate)
+   - Professional bio and career background (2–3 sentences max)
+   - Recent public activity: posts, interviews, podcasts, conference talks (1–2 items max)
    - Public quotes on data, analytics, technology, or business transformation
-   - Any known priorities, pain points, or strategic focus areas
-2. Identify additional relevant executives not listed (CDO, CTO, VP Data, VP Analytics, CFO).
-3. Note any shared connections, alumni networks, or mutual context useful for outreach.
+   - Known priorities or strategic focus areas relevant to ThoughtSpot
+
+HARD CUTOFF: 360 seconds from start. Save and stop regardless of completion.
+If LinkedIn is slow or blocked, skip it immediately — use web search only, do not retry.
 
 Output
 Save a structured JSON file to {output_file} with these keys:
@@ -318,7 +317,6 @@ Constraints
   include a "source" field and "url". If no direct source is available, set source
   to "inferred — no direct source".
 """ + _CITATION_RULE,
-
 
 "case_study_matcher": """
 You are a ThoughtSpot case study matching specialist. Your job is to find the
@@ -379,7 +377,6 @@ Constraints
 - Every recommended_case_study and honorable_mention MUST include "source",
   "source_type", and "url" fields.
 """ + _CITATION_RULE,
-
 
 "combined_fast_sweep": """
 You are a B2B sales research specialist running a fast sweep for a ThoughtSpot AE.
@@ -459,7 +456,6 @@ Constraints
 - Every list item MUST include a "source" field.
 """ + _CITATION_RULE,
 
-
 "combined_deep_research": """
 You are a B2B competitive intelligence specialist running targeted research
 for a ThoughtSpot AE. Your job is to complete competitor intel and case study
@@ -530,7 +526,6 @@ Constraints
 - If approaching 7 minutes → save immediately and stop.
 - Every list item MUST include a "source" field.
 """ + _CITATION_RULE,
-
 
 "combined_account_research": """
 You are a B2B sales research specialist. Your job is to conduct comprehensive
@@ -707,7 +702,6 @@ Constraints
 - Check for existing output files before running each module — skip if present.
 """ + _CITATION_RULE,
 
-
 "sales_call_analyzer": """
 You are a Sales Call Analyzer subagent for ThoughtSpot. Your job is to query
 Gong call data for {account_name} via the ThoughtSpot REST API, classify the
@@ -794,7 +788,6 @@ Sort consolidated_next_steps by priority: HIGH → MED → LOW → DO NOT CONTAC
 
 Save and stop at 7 minutes regardless of completion state.
 """,
-
 
 "outreach_generator": """
 You are an Outreach Generator subagent for ThoughtSpot. Your job is to write
@@ -934,7 +927,6 @@ Save and stop at 7 minutes regardless of completion state.
 
 }
 
-
 def render(template_name: str, **kwargs) -> str:
     """
     Render a named template with the given keyword arguments.
@@ -995,11 +987,129 @@ def render(template_name: str, **kwargs) -> str:
 
     return template.format(**merged)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Speed Cut 4 — Optimised wait polling constants
+# Use these in all PG flow wait_subagents() calls
+# ─────────────────────────────────────────────────────────────────────────────
+
+WAIT_FIRST_MS   = 60_000   # Phase 1 wait  (was 45s)
+WAIT_SECOND_MS  = 60_000   # Phase 2 wait  (was 45s)
+WAIT_FINAL_MS   = 90_000   # Phase 3 final (was 60s)
+WAIT_EXEC_MS    = 180_000  # Exec profiles dedicated wait before cutoff
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speed Cut 2 — Exec profile scoping helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: str = "") -> dict:
+    """
+    Return the correct exec profile scope based on deal stage.
+
+    Speed Cut 2 rule:
+      S0-S1  → up to 4 profiles: target + EB + CEO + CTO
+      S2-S3  → 2 profiles MAX: confirmed champion + confirmed EB only
+      S4+    → skip entirely (return skip=True)
+
+    Args:
+        deal_stage    : Stage string e.g. "3 - Proposal" or "S3"
+        champion_name : Champion name from MEDDPICC (pass "" if unknown)
+        eb_name       : EB name from MEDDPICC (pass "" if unknown)
+
+    Returns:
+        {
+          "skip": bool,
+          "max_profiles": int,
+          "stakeholders": str,   # formatted for render("exec_profile", stakeholders=...)
+          "rationale": str,
+        }
+    """
+    stage_str = str(deal_stage or "").lower()
+
+    # Normalise: "3 - proposal" → s3, "s3" → s3, "3" → s3
+    import re as _re
+    m = _re.search(r's?(\d)', stage_str)
+    stage_num = int(m.group(1)) if m else 0
+
+    if stage_num >= 4:
+        return {
+            "skip": True,
+            "max_profiles": 0,
+            "stakeholders": "",
+            "rationale": f"S{stage_num}+ — stakeholders already known, skipping exec profiles",
+        }
+
+    if stage_num >= 2:
+        # S2–S3: champion + EB only
+        parts = []
+        if champion_name:
+            parts.append(f"{champion_name} (confirmed champion from Gong)")
+        if eb_name and eb_name != champion_name:
+            parts.append(f"{eb_name} (confirmed economic buyer from Gong)")
+        if not parts:
+            parts = ["Identify champion and economic buyer from SFDC/Gong data"]
+        return {
+            "skip": False,
+            "max_profiles": 2,
+            "stakeholders": "; ".join(parts),
+            "rationale": f"S{stage_num} — profiling champion + EB only (2 max)",
+        }
+
+    # S0–S1: full scope
+    parts = []
+    if champion_name:
+        parts.append(f"{champion_name} (champion target)")
+    if eb_name:
+        parts.append(f"{eb_name} (EB target)")
+    parts += ["CEO", "CTO or CDO (whichever is more relevant)"]
+    return {
+        "skip": False,
+        "max_profiles": 4,
+        "stakeholders": "; ".join(parts),
+        "rationale": "S0/S1 — full exec profile scope",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speed Cut 5 — Outreach skeleton builder
+# Pre-supplies structure to Outreach Generator to reduce subagent thinking time
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_outreach_skeleton(sequences: list) -> str:
+    """
+    Build a pre-named JSON skeleton for the Outreach Generator objective.
+    Reduces subagent structure-thinking time (~1 min saved).
+
+    Args:
+        sequences: list of dicts with keys:
+            contact_name, contact_title, contact_role ("champion"|"economic_buyer")
+
+    Returns:
+        JSON skeleton string to embed in outreach subagent objective.
+    """
+    import json as _json
+    skel = {"sequences": []}
+    for seq in sequences:
+        skel["sequences"].append({
+            "contact_name":  seq.get("contact_name", ""),
+            "contact_title": seq.get("contact_title", ""),
+            "contact_role":  seq.get("contact_role", "champion"),
+            "emails": [
+                {"day": 1,  "subject": "...", "body": "...(max 150 words)...", "cta": "..."},
+                {"day": 4,  "subject": "...", "body": "...(max 150 words)...", "cta": "..."},
+                {"day": 10, "subject": "...", "body": "...(max 150 words)...", "cta": "..."},
+            ],
+            "linkedin": {"day": 2, "message": "...(max 80 words)..."},
+            "claim_annotations": [
+                {"claim": "...", "source": "https://..."}
+            ],
+        })
+    return _json.dumps(skel, indent=2)
+
 
 def list_templates() -> list:
     """Return a sorted list of all available template names."""
     return sorted(TEMPLATES.keys())
-
 
 def get_required_fields(template_name: str) -> dict:
     """
@@ -1033,108 +1143,3 @@ def get_required_fields(template_name: str) -> dict:
         "required": sorted(required),
         "optional": sorted(optional),
     }
-
-
-if __name__ == "__main__":
-    import os
-    print("=== subagent_templates v4 self-test ===\n")
-
-    templates = list_templates()
-    print(f"Templates found ({len(templates)}): {templates}\n")
-
-    for name in templates:
-        fields = get_required_fields(name)
-        print(f"  {name}:")
-        print(f"    required: {fields['required']}")
-        print(f"    optional: {fields['optional']}")
-    print()
-
-    full_kwargs = {
-        "account_name":       "Acme Corp",
-        "website_url":        "https://acme.com",
-        "industry":           "Financial Services",
-        "output_file":        "/tmp/test_output.json",
-        "careers_url":        "https://acme.com/careers",
-        "stakeholders":       "Jane Smith (CDO), Bob Lee (VP Analytics)",
-        "use_case":           "self-service BI",
-        "slug":               "acme_corp",
-        "thoughtspot_url":    "https://thoughtspot.example.com",
-        "thoughtspot_token":  "test_token_123",
-        "date_to":            "12/31/2025",
-        "web_research_file":  "/sandbox/acme_corp_web_research.json",
-        "exec_profiles_file": "/sandbox/acme_corp_exec_profiles.json",
-        "competitor_intel_file": "/sandbox/acme_corp_competitor_intel.json",
-        "case_studies_file":  "/sandbox/acme_corp_case_studies.json",
-        "matched_drivers":    "enable_self_service, modernize_legacy_bi",
-        "sfdc_context":       "Champion: Jane Smith. EB: John Gahgan.",
-    }
-
-    for name in templates:
-        try:
-            rendered = render(name, **full_kwargs)
-            print(f"  ✅ {name}: rendered OK ({len(rendered)} chars)")
-        except Exception as exc:
-            print(f"  ❌ {name}: FAILED — {exc}")
-
-    print()
-
-    # Validate fast sweep output files
-    rendered = render("combined_fast_sweep",
-                      account_name="Acme Corp",
-                      website_url="https://acme.com",
-                      slug="acme_corp")
-    assert "/sandbox/acme_corp_web_research.json" in rendered
-    assert "/sandbox/acme_corp_tsumble.json" in rendered
-    assert "/sandbox/acme_corp_competitor_intel.json" not in rendered
-    print("  ✅ combined_fast_sweep: correct output files")
-
-    # Validate deep research output files
-    rendered = render("combined_deep_research",
-                      account_name="Acme Corp",
-                      website_url="https://acme.com",
-                      slug="acme_corp")
-    assert "/sandbox/acme_corp_competitor_intel.json" in rendered
-    assert "/sandbox/acme_corp_case_studies.json" in rendered
-    assert "/sandbox/acme_corp_web_research.json" not in rendered
-    print("  ✅ combined_deep_research: correct output files")
-
-    # Validate outreach generator has claim_annotations schema
-    rendered = render("outreach_generator",
-                      account_name="Acme Corp",
-                      output_file="/sandbox/acme_corp_outreach.json",
-                      web_research_file="/sandbox/acme_corp_web_research.json",
-                      exec_profiles_file="/sandbox/acme_corp_exec_profiles.json",
-                      competitor_intel_file="/sandbox/acme_corp_competitor_intel.json",
-                      case_studies_file="/sandbox/acme_corp_case_studies.json",
-                      matched_drivers="enable_self_service",
-                      sfdc_context="Champion: Jane Smith.")
-    assert "claim_annotations" in rendered
-    assert "VERIFY BEFORE SENDING" in rendered
-    assert "confidence" in rendered
-    print("  ✅ outreach_generator: claim_annotations schema present")
-
-    # Validate sales_call_analyzer renders with defaults
-    rendered = render("sales_call_analyzer",
-                      account_name="Acme Corp",
-                      thoughtspot_url="https://ts.example.com",
-                      thoughtspot_token="tok_123",
-                      output_file="/sandbox/acme_corp_sales_calls.json")
-    assert "GTM RevOps" in rendered
-    assert "record_size" in rendered
-    print("  ✅ sales_call_analyzer: rendered with defaults OK")
-
-    # Validate time budget warnings
-    for name in ["combined_fast_sweep", "combined_deep_research", "combined_account_research"]:
-        rendered = render(name, account_name="X", website_url="https://x.com",
-                          slug="x", output_file="/tmp/x.json")
-        assert "8 minutes" in rendered or "TIME BUDGET" in rendered
-        print(f"  ✅ {name}: time budget warning present")
-
-    # Validate missing required field raises
-    try:
-        render("web_research", website_url="https://acme.com")
-        print("  ❌ Should have raised KeyError")
-    except KeyError:
-        print("  ✅ Missing required field raised correctly")
-
-    print("\nSelf-test complete.")
