@@ -1,5 +1,5 @@
 """
-pg_report_builder.py — v5.4
+pg_report_builder.py — v5.5
 """
 
 import datetime
@@ -27,6 +27,7 @@ def _e(v) -> str:
     if v is None: return ""
     return _html.escape(str(v))
 
+
 def _text(v, fallback: str = "") -> str:
     if v is None: return fallback
     if isinstance(v, str): return v or fallback
@@ -39,6 +40,7 @@ def _text(v, fallback: str = "") -> str:
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
+
 def _src_badge(v) -> str:
     if not isinstance(v, dict): return ""
     src      = v.get("source") or v.get("source_url") or v.get("url") or ""
@@ -49,9 +51,11 @@ def _src_badge(v) -> str:
         return f" <a href='{_e(src)}' target='_blank' style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
+
 def _render_item(v) -> str:
     if isinstance(v, dict): return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
+
 
 def _classify_leg(title: str) -> str:
     if not title: return "UNKNOWN"
@@ -59,6 +63,7 @@ def _classify_leg(title: str) -> str:
     for leg, keywords in LEG_RULES:
         if any(kw in t for kw in keywords): return leg
     return "UNKNOWN"
+
 
 def _score_to_grade(score) -> str:
     try:
@@ -70,6 +75,7 @@ def _score_to_grade(score) -> str:
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
+
 def _decode_ts_date(val, fmt="%b %Y") -> str:
     from datetime import datetime
     if isinstance(val, dict):
@@ -79,6 +85,7 @@ def _decode_ts_date(val, fmt="%b %Y") -> str:
             except Exception: return str(inner)
     if val is None or val == "": return ""
     return str(val)
+
 
 def _classify_deal(days_cold, activity_rows, cols) -> str:
     if days_cold is None: return "unknown"
@@ -191,12 +198,14 @@ function showTab(slug, tabId) {
 def _section_header(icon: str, title: str) -> str:
     return f"<div class='section-header'><div class='section-icon'>{icon}</div><h2 class='section-title'>{_e(title)}</h2></div>"
 
+
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
 
+
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
-    out  = f"<div class='signal-card'><div class='signal-card-title'>{title}</div>"
+    out = f"<div class='signal-card'><div class='signal-card-title'>{title}</div>"
     if meta: out += f"<div class='signal-card-meta'>{meta}</div>"
     if bullets:
         for b in bullets: out += f"<div class='money-row'><span>{b}</span></div>"
@@ -286,7 +295,20 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
             out += f"<div class='stool-leg{'  empty' if is_empty else ''}'>"
             out += f"<div class='stool-leg-header'><div class='stool-leg-icon' style='background:{color}20;'>{icon}</div><span class='stool-leg-name' style='color:{color};'>{_e(leg_key)}</span></div>"
             if is_empty:
-                out += "<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified — add to target list</p>"
+                ep_suggestions = []
+                for exec_data in raw.get("exec_profiles", {}).get("executives", []):
+                    if not isinstance(exec_data, dict): continue
+                    t = exec_data.get("title", "")
+                    if _classify_leg(t) == leg_key:
+                        ep_suggestions.append(f"{exec_data.get('name', '')} — {t}")
+                out += "<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified in SFDC — add to target list</p>"
+                if ep_suggestions:
+                    out += (f"<p style='font-size:10px;color:#D97706;margin:6px 0 0;font-weight:600;'>"
+                            f"💡 Suggested from exec profiles: "
+                            + ", ".join(_e(s) for s in ep_suggestions[:2]) + "</p>")
+                else:
+                    out += (f"<p style='font-size:10px;color:#94A3B8;margin:6px 0 0;'>"
+                            f"💡 No exec profile match — research {_e(leg_key)} contacts at {_e(account_name)}</p>")
             else:
                 for contact in contacts:
                     out += "<div class='stool-person'>"
@@ -334,9 +356,11 @@ def _stakeholder_map_section(ts_data: dict) -> str:
         rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
         champion_valid = bool(rec.get("Opportunity Gong Champion Validated"))
         eb_valid       = bool(rec.get("Opportunity Gong Economic Buyer Validated"))
+
     def _fmt(val, label):
         if val and val.strip(): return _e(val)
         return f"<span class='flag'>⚠️ {_e(label)}</span>"
+
     if champion_valid and not champion_name:
         champ_display = "<span class='flag'>⚠️ Validated in Gong but name not captured</span>"
     elif champion_name:
@@ -360,6 +384,43 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     out += f"<tr><td>Opportunity Owner</td><td>{_fmt(opp_owner, 'Not found')}</td></tr>"
     out += f"<tr><td>CS Name</td><td>{_fmt(cs_name, 'Not assigned')}</td></tr>"
     out += "</tbody></table>" + crossref
+    return out
+
+
+def _render_claim_annotations(annotations: list) -> str:
+    if not annotations: return ""
+    flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
+    unverified_count = len(flags)
+    out  = "<details style='margin-top:8px;'>"
+    out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
+            f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
+            f"display:flex;align-items:center;gap:8px;'>🔍 Claim sources ({len(annotations)})")
+    if unverified_count:
+        out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
+    out += "</summary>"
+    out += "<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
+    for ann in annotations:
+        if not isinstance(ann, dict): continue
+        claim      = _e(ann.get("claim", ""))
+        basis      = _e(ann.get("basis", ""))
+        source     = ann.get("source", "")
+        src_type   = _e(ann.get("source_type", ""))
+        confidence = ann.get("confidence", "confirmed")
+        flag       = ann.get("flag", "")
+        bg_color     = "#FFF7ED" if flag else "#F8FAFF"
+        border_color = "#FED7AA" if flag else "#E2E8F8"
+        conf_color   = "#16A34A" if confidence == "confirmed" else "#D97706" if confidence == "inferred" else "#94A3B8"
+        out += f"<div style='padding:10px 14px;background:{bg_color};border-bottom:1px solid {border_color};font-size:12px;'>"
+        out += f"<div style='margin-bottom:4px;'><span style='font-weight:600;color:{NAVY};'>Claim:</span> <span style='font-style:italic;color:#334155;'>{claim}</span></div>"
+        if basis: out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
+        out += "<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
+        if source:
+            if source.startswith("http"): out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
+            else: out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
+        out += f"<span style='color:{conf_color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
+        if flag: out += f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
+        out += "</div></div>"
+    out += "</div></details>"
     return out
 
 
@@ -387,7 +448,26 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
                     f"data investment actually pay off. Worth a conversation to see if the timing is right?")
     else:
         tp_text += "<span style='color:#93C5FD;'>⚠️ No financial signal found — generic value used</span>"
-    return f"<div class='talking-point'><div class='talking-point-label'>💡 Talking Point · {_e(label)}</div><p>{tp_text}</p></div>"
+    out = f"<div class='talking-point'><div class='talking-point-label'>💡 Talking Point · {_e(label)}</div><p>{tp_text}</p></div>"
+    wr           = raw.get("web_research", {})
+    pain_sources = [p for p in wr.get("pain_points", []) if isinstance(p, dict) and p.get("source")]
+    ci           = raw.get("competitor_intel", {})
+    comp_sources = [t for t in ci.get("tools_confirmed", []) if isinstance(t, dict) and t.get("source")]
+    citations = []
+    if pain_signal and pain_sources:
+        src = pain_sources[0]
+        citations.append({"claim": pain_signal, "source": src.get("url", src.get("source", "")), "source_type": src.get("source_type", "web"), "confidence": "confirmed", "flag": ""})
+    elif pain_signal:
+        citations.append({"claim": pain_signal, "source": "inferred from web research — no direct URL", "source_type": "inferred", "confidence": "inferred", "flag": "VERIFY BEFORE USING"})
+    if financial_hook:
+        citations.append({"claim": financial_hook, "source": f"ThoughtSpot value driver: {label}", "source_type": "value_driver", "confidence": "confirmed", "flag": ""})
+    for cs in comp_sources[:2]:
+        citations.append({"claim": f"{cs.get('tool', '')} identified in tech stack", "source": cs.get("url", cs.get("source", "")), "source_type": cs.get("source_type", "job_posting"), "confidence": "confirmed" if cs.get("url") else "inferred", "flag": "" if cs.get("url") else "VERIFY BEFORE USING"})
+    if not citations:
+        out += "<div style='background:#FFF7ED;border-left:4px solid #F97316;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:12px;color:#9a3412;'>⚠️ No source evidence found for this talking point — verify claims manually before using.</div>"
+    else:
+        out += _render_claim_annotations(citations)
+    return out
 
 
 def _hiring_signals_section(raw: dict) -> str:
@@ -436,6 +516,8 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
             if evidence: meta_parts.append(f"<b>Evidence:</b> {evidence[:180]}{src}")
             meta_parts.append(f"<b>TS Angle:</b> <span style='color:{BLUE};'>{angle}</span>" if angle else "<span class='flag'>⚠️ No ThoughtSpot angle identified</span>")
             if fit: meta_parts.append(f"<b>Fit Signal:</b> <span style='color:#16A34A;'>{fit}</span>")
+            if not t.get("source") and not t.get("url"):
+                meta_parts.append("<span class='flag' style='font-size:10px;'>⚠️ No source — inferred, verify before presenting</span>")
             out += _signal_card(tool, "<br>".join(meta_parts))
     if suspected:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3><ul style='margin:0;padding-left:16px;'>"
@@ -463,12 +545,16 @@ def _value_drivers_section(matched_drivers: list) -> str:
         evidence  = m.get("evidence", []) if isinstance(m, dict) else []
         bullets   = [f"💰 {b}" for b in money_in[:2]] + [f"🛡️ {b}" for b in money_out[:2]]
         meta = ""
-        if evidence: meta += f"<span style='color:#64748b;font-size:11px;'>Matched: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
-        if pain_pts: meta += f"<span style='color:#475569;font-size:12px;'>Pain: {_e(pain_pts[0])}</span>"
+        if evidence:
+            meta += f"<span style='color:#64748b;font-size:11px;'>Matched signals: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
+            meta += f"<span style='font-size:10px;color:#16A34A;font-weight:600;'>✅ Grounded in account research — see web research and competitor intel for sources</span>"
+        else:
+            meta += f"<span style='font-size:10px;color:#DC2626;font-weight:600;'>⚠️ No account-specific evidence — generic driver, verify before presenting</span>"
+        if pain_pts: meta += f"<br><span style='color:#475569;font-size:12px;'>Pain addressed: {_e(pain_pts[0])}</span>"
         out += _signal_card(_e(label), meta, bullets)
     return out
 
-
+    
 def _deal_story_section(ts_data: dict) -> str:
     import re as _re
     ds_result  = ts_data.get("deal_stage", {})
@@ -739,7 +825,9 @@ def _gong_calls_section(raw: dict) -> str:
                     f"<td>{_e(ns.get('contact', ''))}</td><td>{_e(ns.get('action', ''))}</td><td>{_e(ns.get('owner', ''))}</td></tr>")
         out += "</tbody></table>"
     return out
-    def _6sense_section(ts_data: dict) -> str:
+
+
+def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
     if not rows: return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
@@ -906,43 +994,6 @@ def _normalize_outreach(outreach_data: dict) -> dict:
     return outreach_data
 
 
-def _render_claim_annotations(annotations: list) -> str:
-    if not annotations: return ""
-    flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
-    unverified_count = len(flags)
-    out  = "<details style='margin-top:8px;'>"
-    out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
-            f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
-            f"display:flex;align-items:center;gap:8px;'>🔍 Claim annotations ({len(annotations)})")
-    if unverified_count:
-        out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
-    out += "</summary>"
-    out += "<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
-    for ann in annotations:
-        if not isinstance(ann, dict): continue
-        claim      = _e(ann.get("claim", ""))
-        basis      = _e(ann.get("basis", ""))
-        source     = ann.get("source", "")
-        src_type   = _e(ann.get("source_type", ""))
-        confidence = ann.get("confidence", "confirmed")
-        flag       = ann.get("flag", "")
-        bg_color     = "#FFF7ED" if flag else "#F8FAFF"
-        border_color = "#FED7AA" if flag else "#E2E8F8"
-        conf_color   = "#16A34A" if confidence == "confirmed" else "#D97706" if confidence == "inferred" else "#94A3B8"
-        out += f"<div style='padding:10px 14px;background:{bg_color};border-bottom:1px solid {border_color};font-size:12px;'>"
-        out += f"<div style='margin-bottom:4px;'><span style='font-weight:600;color:{NAVY};'>Claim:</span> <span style='font-style:italic;color:#334155;'>{claim}</span></div>"
-        if basis: out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
-        out += "<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
-        if source:
-            if source.startswith("http"): out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
-            else: out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
-        out += f"<span style='color:{conf_color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
-        if flag: out += f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
-        out += "</div></div>"
-    out += "</div></details>"
-    return out
-
-
 def _outreach_section(outreach_data: dict) -> str:
     outreach_data = _normalize_outreach(outreach_data)
     if not outreach_data: return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
@@ -1017,7 +1068,6 @@ def _build_html_page(title: str, body: str) -> str:
         + _CSS + "</head><body>" + body + _JS + "</body></html>"
     )
 
-
 def build_pg_report(
     slug:            str,
     account_name:    str,
@@ -1029,6 +1079,10 @@ def build_pg_report(
     outreach_data:   dict = None,
     output_dir:      str  = "/sandbox",
 ) -> dict:
+    """
+    Build a PG report HTML string with full ThoughtSpot branding.
+    Returns {"filename", "html", "slug", "phase"}
+    """
     outreach_data = outreach_data or {}
     tabs          = _get_tabs(phase)
     owner         = header_data.get("owner_name", "AE")
@@ -1110,9 +1164,8 @@ def build_pg_report(
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.4] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.5] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-
 
 def build_onepager(
     slug:            str,
@@ -1121,6 +1174,11 @@ def build_onepager(
     matched_drivers: list,
     output_dir:      str = "/sandbox",
 ) -> dict:
+    """
+    Build an external customer-facing one-pager.
+    No internal data. ThoughtSpot-branded design.
+    Returns {"filename", "html", "slug"}
+    """
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
     desc     = _text(wr.get("description", {}))
@@ -1236,6 +1294,5 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.4] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.5] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
-    
