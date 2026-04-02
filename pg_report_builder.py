@@ -1,23 +1,32 @@
 """
-pg_report_builder.py — v5.3
+pg_report_builder.py — v5.4
 ----------------------------------------------------------------
 Builds PG report HTML files from subagent JSON output and TS query results.
 
+v5.4 changes:
+- _gong_calls_section(): fixed key names to match subagent output
+  (total_calls_found, meaningful_calls, voicemail_calls, call_summaries)
+- _deal_story_section(): opp_name fallback chain, no longer gates section
+  on empty opp name
+- _normalize_outreach(): handles linkedin key → linkedin_messages,
+  distributes sequence-level claim_annotations to individual emails,
+  handles flat dict with email_1/linkedin keys at top level
+
 v5.3 changes:
-- Full ThoughtSpot-brand redesign matching thoughtspot.com aesthetic
-- Hero section with gradient, eyebrow text, meta row
-- Section headers with icon + colored background
-- Cards, signal cards, talking point box all restyled
-- Print-optimized CSS — Cmd+P Save as PDF gives clean output
-- Tab navigation sticky at top, styled dark
-- One-pager redesigned with matching brand language
-- _four_leg_stool_section() uses exec_profiles as primary source (v5.2)
+- Full ThoughtSpot-brand redesign
+- Hero section, section headers with icons, cards restyled
+- Print-optimized CSS
+- Tab navigation sticky at top
+
+v5.2 changes:
+- _four_leg_stool_section() uses exec_profiles as primary source
 """
 
 import datetime
 import html as _html
 
 from value_drivers import get_drivers, get_money_signals
+
 
 NAVY       = "#1D2D50"
 BLUE       = "#2E5CE5"
@@ -68,10 +77,12 @@ LEG_RULES = [
     ]),
 ]
 
+
 def _e(v) -> str:
     if v is None:
         return ""
     return _html.escape(str(v))
+
 
 def _text(v, fallback: str = "") -> str:
     if v is None:
@@ -89,6 +100,7 @@ def _text(v, fallback: str = "") -> str:
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
+
 def _src_badge(v) -> str:
     if not isinstance(v, dict):
         return ""
@@ -104,10 +116,12 @@ def _src_badge(v) -> str:
         )
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
+
 def _render_item(v) -> str:
     if isinstance(v, dict):
         return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
+
 
 def _classify_leg(title: str) -> str:
     if not title:
@@ -118,6 +132,7 @@ def _classify_leg(title: str) -> str:
             return leg
     return "UNKNOWN"
 
+
 def _score_to_grade(score) -> str:
     try:
         n = float(score)
@@ -127,6 +142,45 @@ def _score_to_grade(score) -> str:
         return "C"
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
+
+
+def _decode_ts_date(val, fmt="%b %Y") -> str:
+    from datetime import datetime
+    if isinstance(val, dict):
+        inner = val.get("v", val)
+        if isinstance(inner, dict) and "s" in inner:
+            try:
+                return datetime.utcfromtimestamp(inner["s"]).strftime(fmt)
+            except Exception:
+                return str(inner)
+    if val is None or val == "":
+        return ""
+    return str(val)
+
+
+def _classify_deal(days_cold, activity_rows, cols) -> str:
+    if days_cold is None:
+        return "unknown"
+    try:
+        dc = int(days_cold)
+    except (TypeError, ValueError):
+        return "unknown"
+    role_idx = cols.index("Activity Owner Role") if "Activity Owner Role" in cols else -1
+    if role_idx >= 0 and activity_rows:
+        roles = set()
+        for r in activity_rows:
+            if isinstance(r, list) and len(r) > role_idx:
+                roles.add(str(r[role_idx]))
+        ae_roles = {r for r in roles if r and any(
+            k in r for k in ("AE", "Account Executive", " SE ", "Solutions Engineer", "Sales Engineer")
+        )}
+        if not ae_roles and roles - {"", "None", "nan"}:
+            return "sdr_only"
+    if dc > 365:  return "ghost"
+    if dc > 180:  return "cold"
+    if dc > 60:   return "stalled"
+    return "live"
+
 
 _CSS = f"""
 <style>
@@ -293,7 +347,7 @@ tr:nth-child(even) td {{ background: #f8faff; }}
 }}
 .pill {{ display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
 .pill-blue   {{ background: {LIGHT_BLUE}; color: {BLUE}; }}
-.pill-green  {{ background: #dcfce7; color: #166534; }}
+.pill-green  {{ background: #dcfce7; color: #166634; }}
 .pill-orange {{ background: #ffedd5; color: #9a3412; }}
 .pill-red    {{ background: #fee2e2; color: #991b1b; }}
 .flag {{ color: #dc2626; font-size: 12px; font-weight: 600; }}
@@ -333,6 +387,7 @@ function showTab(slug, tabId) {
 </script>
 """
 
+
 def _section_header(icon: str, title: str) -> str:
     return (
         f"<div class='section-header'>"
@@ -341,9 +396,11 @@ def _section_header(icon: str, title: str) -> str:
         f"</div>"
     )
 
+
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
+
 
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
     out  = f"<div class='signal-card'>"
@@ -355,6 +412,7 @@ def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
             out += f"<div class='money-row'><span>{b}</span></div>"
     out += "</div>"
     return out
+
 
 def _company_overview_section(raw: dict) -> str:
     wr   = raw.get("web_research", {})
@@ -396,6 +454,7 @@ def _company_overview_section(raw: dict) -> str:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
 
     return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
+
 
 def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) -> str:
     raw = raw or {}
@@ -508,6 +567,7 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         )
     return out
 
+
 def _stakeholder_map_section(ts_data: dict) -> str:
     sfdc      = ts_data.get("sfdc_stakeholder", {})
     rows      = sfdc.get("data_rows", [])
@@ -572,6 +632,7 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     out += "</tbody></table>" + crossref
     return out
 
+
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
         return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
@@ -612,6 +673,7 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
         f"<p>{tp_text}</p></div>"
     )
 
+
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
@@ -647,6 +709,7 @@ def _hiring_signals_section(raw: dict) -> str:
             out += f"<tr><td colspan='4'>{_e(str(r))}</td></tr>"
     out += "</tbody></table>"
     return out
+
 
 def _competitor_section(raw: dict, matched_drivers: list) -> str:
     ci        = raw.get("competitor_intel", {})
@@ -691,6 +754,7 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
         out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
 
+
 def _value_drivers_section(matched_drivers: list) -> str:
     if not matched_drivers:
         return "<p style='color:#94A3B8;'>No value driver data available.</p>"
@@ -716,44 +780,6 @@ def _value_drivers_section(matched_drivers: list) -> str:
     return out
 
 
-def _decode_ts_date(val, fmt="%b %Y") -> str:
-    """Decode ThoughtSpot epoch dict {'v': {'s': 1234}} or raw string to readable date."""
-    from datetime import datetime
-    if isinstance(val, dict):
-        inner = val.get("v", val)
-        if isinstance(inner, dict) and "s" in inner:
-            try:
-                return datetime.utcfromtimestamp(inner["s"]).strftime(fmt)
-            except Exception:
-                return str(inner)
-    if val is None or val == "":
-        return ""
-    return str(val)
-
-
-def _classify_deal(days_cold, activity_rows, cols) -> str:
-    """ghost >365d | cold 180-365d | stalled 60-180d | live <60d | sdr_only | unknown"""
-    if days_cold is None:
-        return "unknown"
-    try:
-        dc = int(days_cold)
-    except (TypeError, ValueError):
-        return "unknown"
-    role_idx = cols.index("Activity Owner Role") if "Activity Owner Role" in cols else -1
-    if role_idx >= 0 and activity_rows:
-        roles = set()
-        for r in activity_rows:
-            if isinstance(r, list) and len(r) > role_idx:
-                roles.add(str(r[role_idx]))
-        ae_roles = {r for r in roles if r and any(k in r for k in ("AE", "Account Executive", " SE ", "Solutions Engineer", "Sales Engineer"))}
-        if not ae_roles and roles - {"", "None", "nan"}:
-            return "sdr_only"
-    if dc > 365:  return "ghost"
-    if dc > 180:  return "cold"
-    if dc > 60:   return "stalled"
-    return "live"
-
-
 def _deal_story_section(ts_data: dict) -> str:
     import re as _re
 
@@ -774,13 +800,22 @@ def _deal_story_section(ts_data: dict) -> str:
     if not ds_rows:
         return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
 
-    ds_rec      = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
-    opp_name    = _e(ds_rec.get("Opportunity Name", ""))
-    stage       = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
-    owner       = _e(ds_rec.get("Opportunity Owner Name", ""))
-    pq          = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
-    created     = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
-    last_act    = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
+    ds_rec = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
+
+    # v5.4 fix: opp_name fallback chain — Opportunity Name not always in deal_stage columns
+    opp_name = (
+        ds_rec.get("Opportunity Name", "")
+        or ds_rec.get("SFDC Opp Name URL", "")
+        or ds_rec.get("Opportunity Name with url", "")
+        or ""
+    )
+    opp_name = _e(opp_name) if opp_name else "(opportunity)"
+
+    stage    = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
+    owner    = _e(ds_rec.get("Opportunity Owner Name", ""))
+    pq       = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
+    created  = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
+    last_act = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
 
     days_cold   = None
     prior_close = ""
@@ -797,7 +832,6 @@ def _deal_story_section(ts_data: dict) -> str:
         act_rows, act_cols
     )
 
-    # Funnel timing — skip entirely if all zeros
     ft_rec        = {}
     has_ft_values = False
     if ft_rows:
@@ -805,12 +839,13 @@ def _deal_story_section(ts_data: dict) -> str:
         has_ft_values = any(
             ft_rec.get(k, 0) not in (0, None, "", "0")
             for k in ["Total f Opportunity S1 Duration", "Total f Opportunity S2 Duration",
-                      "Total f Opportunity S3 Duration", "Total f Opportunity M0 to S7 Duration"]
+                      "Total f Opportunity S3 Duration", "Total f Opportunity M0 to S7 Duration",
+                      "f Opportunity S1 Duration", "f Opportunity S2 Duration",
+                      "f Opportunity S3 Duration", "f Opportunity M0 to S7 Duration"]
         )
 
     out = ""
 
-    # ── Opp header card ──────────────────────────────────────────────
     CLASS_BADGES = {
         "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
         "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
@@ -823,15 +858,15 @@ def _deal_story_section(ts_data: dict) -> str:
 
     out += f"<div class='opp-card'>"
     out += f"<b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
-    if stage:    out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
-    if pq:       out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
+    if stage:      out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
+    if pq:         out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
     if badge_html: out += badge_html
 
     meta = []
-    if owner:      meta.append(f"Owner: {owner}")
-    if created:    meta.append(f"Created: {created}")
-    if last_act:   meta.append(f"Last opp activity: {last_act}")
-    if prior_close: meta.append(f"Prior close date: {prior_close}")
+    if owner:       meta.append(f"Owner: {owner}")
+    if created:     meta.append(f"Created: {created}")
+    if last_act:    meta.append(f"Last opp activity: {last_act}")
+    if prior_close: meta.append(f"Prior close: {prior_close}")
     if days_cold is not None:
         dc = int(days_cold)
         meta.append(f"<span style='color:{dc_color};font-weight:700;'>{dc}d since last account touch</span>")
@@ -842,13 +877,12 @@ def _deal_story_section(ts_data: dict) -> str:
         out += "</div>"
     out += "</div>"
 
-    # ── Activity table ────────────────────────────────────────────────
     if act_rows:
         type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅",
                       "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
         date_idx  = next((act_cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in act_cols), -1)
-        type_idx  = act_cols.index("Activity Type")     if "Activity Type"     in act_cols else -1
-        subj_idx  = act_cols.index("Activity Subject")  if "Activity Subject"  in act_cols else -1
+        type_idx  = act_cols.index("Activity Type")      if "Activity Type"      in act_cols else -1
+        subj_idx  = act_cols.index("Activity Subject")   if "Activity Subject"   in act_cols else -1
         owner_idx = act_cols.index("Activity Owner Name") if "Activity Owner Name" in act_cols else -1
 
         out += f"""<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;
@@ -874,9 +908,9 @@ def _deal_story_section(ts_data: dict) -> str:
             prospect   = "Unknown Contact"
             nm = _re.search(r'(?:Call|Email|to|for)\s+([A-Z][a-z]+ [A-Z][a-z]+)', subj_raw)
             if nm: prospect = nm.group(1)
-            icon     = type_icons.get(atype_raw, "📌")
-            bg       = "#FAFBFF" if i % 2 == 0 else "#FFFFFF"
-            dim      = "opacity:0.55;" if owner_val in ("Salesforce Automation", "") else ""
+            icon = type_icons.get(atype_raw, "📌")
+            bg   = "#FAFBFF" if i % 2 == 0 else "#FFFFFF"
+            dim  = "opacity:0.55;" if owner_val in ("Salesforce Automation", "") else ""
             out += (f"\n    <tr style='background:{bg};{dim}'>"
                     f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{_e(date_val)}</td>"
                     f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{icon} {_e(atype_raw)}</td>"
@@ -886,26 +920,24 @@ def _deal_story_section(ts_data: dict) -> str:
                     f"</tr>")
         out += "\n  </tbody></table>"
 
-    # ── Funnel timing (only when non-zero) ────────────────────────────
     if has_ft_values:
         timing_map = [
-            ("Total f Opportunity S1 Duration", "S1"),
-            ("Total f Opportunity S2 Duration", "S2"),
-            ("Total f Opportunity S3 Duration", "S3"),
-            ("Total f Opportunity M0 to S7 Duration", "M0→S7"),
-            ("Opportunity Current Stage Duration", "Current Stage"),
+            ("Total f Opportunity S1 Duration", "f Opportunity S1 Duration", "S1"),
+            ("Total f Opportunity S2 Duration", "f Opportunity S2 Duration", "S2"),
+            ("Total f Opportunity S3 Duration", "f Opportunity S3 Duration", "S3"),
+            ("Total f Opportunity M0 to S7 Duration", "f Opportunity M0 to S7 Duration", "M0→S7"),
+            ("Opportunity Current Stage Duration", "Opportunity Current Stage Duration", "Current Stage"),
         ]
         out += f"<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 8px;'>Funnel Timing</h3>"
         out += "<table style='border-collapse:collapse;font-size:12px;'>"
         out += f"<thead><tr style='background:#F8FAFF;'><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Stage</th><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Days</th></tr></thead><tbody>"
-        for key, label in timing_map:
-            val = ft_rec.get(key)
+        for primary_key, fallback_key, label in timing_map:
+            val = ft_rec.get(primary_key) or ft_rec.get(fallback_key)
             if val not in (0, None, "", "0"):
                 out += (f"<tr><td style='padding:6px 12px;color:#475569;border-bottom:1px solid #F1F5F9;'>{label}</td>"
                         f"<td style='padding:6px 12px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(str(val))}</td></tr>")
         out += "</tbody></table>"
 
-    # ── Contextual callouts based on deal class ───────────────────────
     if deal_class in ("ghost", "cold", "stalled", "sdr_only"):
         dc_str = f"{int(days_cold)}d" if days_cold is not None else "extended time"
         sdr_li = ("<li>All prior touches were <strong>SDR-level or automated</strong> — "
@@ -914,7 +946,7 @@ def _deal_story_section(ts_data: dict) -> str:
         prior_li = (f"<li>Prior close date <strong>{prior_close}</strong> has passed — "
                     "update or re-create opp after re-qualification</li>"
                     if prior_close else "")
-
+        owner_str = owner if owner else "the current opp owner"
         out += f"""
 <div style='margin-top:20px;background:#FFF7ED;border-left:4px solid #D97706;border-radius:8px;padding:16px 18px;'>
   <div style='font-size:11px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚡ Re-Engagement Context</div>
@@ -927,7 +959,7 @@ def _deal_story_section(ts_data: dict) -> str:
 <div style='margin-top:12px;background:#FFF1F2;border-left:4px solid #E11D48;border-radius:8px;padding:14px 16px;'>
   <div style='font-size:11px;font-weight:700;color:#E11D48;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚠️ Risk Flags</div>
   <ul style='margin:0;padding-left:18px;font-size:12px;color:#475569;line-height:1.6;'>
-    <li>Verify opp owner <strong>{owner}</strong> is still active and aware before any outreach</li>
+    <li>Verify opp owner <strong>{owner_str}</strong> is still active and aware before any outreach</li>
     {prior_li}
     <li>Re-qualify from scratch — do not assume prior context carries over</li>
   </ul>
@@ -937,11 +969,9 @@ def _deal_story_section(ts_data: dict) -> str:
 
 
 def _activity_section(ts_data: dict) -> str:
-    """Styled activity history table with prospect name extraction."""
     import re as _re
 
-    act  = ts_data.get("activity_history_detail",
-           ts_data.get("activity_history", {}))
+    act  = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
     rows = act.get("data_rows", [])
     cols = act.get("column_names", [])
 
@@ -1032,17 +1062,24 @@ def _sales_call_section(ts_data: dict) -> str:
     out += "</tbody></table>"
     return out
 
+
 def _gong_calls_section(raw: dict) -> str:
+    """
+    v5.4 fix: key names updated to match actual subagent output.
+    Handles both old schema (signals/total_rows) and new schema
+    (call_summaries/total_calls_found) with fallback lookups.
+    """
     calls = raw.get("sales_calls", {})
     if not calls:
         return "<p style='color:#94A3B8;'>No Gong call data available.</p>"
 
-    signals    = calls.get("signals", [])
+    # v5.4 fix: use .get(primary, .get(fallback)) for all key lookups
+    signals    = calls.get("signals",         calls.get("call_summaries", []))
+    total      = calls.get("total_rows",      calls.get("total_calls_found", 0))
+    meaningful = calls.get("meaningful_count", calls.get("meaningful_calls", 0))
+    voicemail  = calls.get("voicemail_count",  calls.get("voicemail_calls", 0))
+    no_content = calls.get("no_content_count", calls.get("no_content_calls", 0))
     next_steps = calls.get("consolidated_next_steps", [])
-    total      = calls.get("total_rows", 0)
-    meaningful = calls.get("meaningful_count", 0)
-    voicemail  = calls.get("voicemail_count", 0)
-    no_content = calls.get("no_content_count", 0)
 
     out = _card(
         f"<div style='display:flex;gap:32px;'>"
@@ -1062,13 +1099,13 @@ def _gong_calls_section(raw: dict) -> str:
             sent_color = "#16a34a" if sentiment == "POSITIVE" else "#ef4444" if sentiment == "NEGATIVE" else "#d97706"
             contact    = _e(s.get("contact_name", "") or s.get("contact_email", ""))
             call_name  = _e(s.get("call_name", ""))
-            summary    = _e(s.get("brief_summary", ""))
-            next_s     = _e(s.get("next_steps", ""))
+            summary    = _e(s.get("brief_summary", "") or s.get("summary", ""))
+            next_s     = _e(s.get("next_steps", "") or s.get("highlights_next_steps", ""))
             action     = _e(s.get("recommended_action", ""))
             out += "<div class='signal-card'>"
             out += f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'>"
             out += f"<span style='color:{sent_color};font-weight:700;'>{sentiment}</span>"
-            if contact: out += f"<b style='color:{NAVY};'>{contact}</b>"
+            if contact:   out += f"<b style='color:{NAVY};'>{contact}</b>"
             if call_name: out += f"<span style='color:#94A3B8;font-size:11px;'>· {call_name}</span>"
             out += "</div>"
             if summary: out += f"<p style='margin:0 0 6px;font-size:13px;'>{summary}</p>"
@@ -1093,8 +1130,7 @@ def _gong_calls_section(raw: dict) -> str:
             )
         out += "</tbody></table>"
     return out
-
-def _6sense_section(ts_data: dict) -> str:
+    def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
     if not rows:
@@ -1113,6 +1149,7 @@ def _6sense_section(ts_data: dict) -> str:
         )
     out += "</tbody></table>"
     return out
+
 
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
@@ -1142,6 +1179,7 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
         out += "</div>"
     out += "</div>"
     return out
+
 
 def _exec_profiles_section(raw: dict) -> str:
     execs = raw.get("exec_profiles", {}).get("executives", [])
@@ -1199,30 +1237,78 @@ def _exec_profiles_section(raw: dict) -> str:
                         out += "</blockquote>"
         out += "</div>"
     return out
+
+
 def _normalize_outreach(outreach_data: dict) -> dict:
     """
-    Normalize outreach data to standard schema regardless of
-    what shape the subagent returned.
+    v5.4: Normalize outreach data to standard schema regardless of subagent output shape.
 
     Standard schema:
       {"sequences": [{"contact_name", "contact_title",
-                       "emails": [{"subject", "body", "claim_annotations"}],
-                       "linkedin_messages": [{"body", "claim_annotations"}]}]}
+                       "emails": [{"subject", "body", "claim_annotations": [...]}],
+                       "linkedin_messages": [{"body", "claim_annotations": [...]}]}]}
 
-    Handles alternate shape:
-      {"contacts": [...], "sequences": {"email_1": ..., "linkedin_1": ...}}
+    Handles:
+      - contacts[].sequences.email_1 shape
+      - flat dict with email_1/linkedin keys
+      - linkedin key (single object) → linkedin_messages (list)
+      - sequence-level claim_annotations distributed to individual emails
     """
     if not outreach_data:
         return {}
 
     # Already correct shape — sequences is a list
     if "sequences" in outreach_data and isinstance(outreach_data["sequences"], list):
+        # Still normalize linkedin key and distribute annotations within each sequence
+        for seq in outreach_data["sequences"]:
+            # Fix: linkedin single object → linkedin_messages list
+            if "linkedin" in seq and "linkedin_messages" not in seq:
+                linkedin = seq.pop("linkedin")
+                if isinstance(linkedin, dict):
+                    body = linkedin.get("message", linkedin.get("body", str(linkedin)))
+                    seq["linkedin_messages"] = [{"body": body, "claim_annotations": []}]
+                elif isinstance(linkedin, list):
+                    seq["linkedin_messages"] = linkedin
+                else:
+                    seq["linkedin_messages"] = [{"body": str(linkedin), "claim_annotations": []}]
+
+            # Ensure linkedin_messages exists
+            if "linkedin_messages" not in seq:
+                seq["linkedin_messages"] = []
+
+            # Fix: distribute sequence-level claim_annotations to emails
+            seq_annotations = seq.get("claim_annotations", [])
+            if seq_annotations:
+                emails = seq.get("emails", [])
+                if emails and isinstance(emails[0], dict):
+                    if len(emails) == 1:
+                        if not emails[0].get("claim_annotations"):
+                            emails[0]["claim_annotations"] = seq_annotations
+                    else:
+                        chunk = max(1, len(seq_annotations) // len(emails))
+                        for i, email in enumerate(emails):
+                            if not email.get("claim_annotations"):
+                                start = i * chunk
+                                end   = start + chunk if i < len(emails) - 1 else len(seq_annotations)
+                                email["claim_annotations"] = seq_annotations[start:end]
+
+            # Ensure all emails have claim_annotations key
+            for email in seq.get("emails", []):
+                if isinstance(email, dict) and "claim_annotations" not in email:
+                    email["claim_annotations"] = []
+
+            # Ensure all linkedin_messages have claim_annotations key
+            for msg in seq.get("linkedin_messages", []):
+                if isinstance(msg, dict) and "claim_annotations" not in msg:
+                    msg["claim_annotations"] = []
+
         return outreach_data
 
-    # Handle contacts[].sequences.email_1 shape
+    # Handle contacts[].sequences shape
     if "contacts" in outreach_data:
-        seq_data = outreach_data.get("sequences", {})
-        sequences = []
+        seq_data    = outreach_data.get("sequences", {})
+        annotations = outreach_data.get("claim_annotations", [])
+        sequences   = []
         for contact in outreach_data.get("contacts", []):
             emails  = []
             li_msgs = []
@@ -1236,13 +1322,22 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                             if "claim_annotations" not in item:
                                 item["claim_annotations"] = []
                             emails.append(item)
-                    elif key.startswith("linkedin"):
+                    elif key in ("linkedin", "linkedin_messages") or key.startswith("linkedin"):
                         if isinstance(item, str):
                             li_msgs.append({"body": item, "claim_annotations": []})
                         elif isinstance(item, dict):
-                            if "claim_annotations" not in item:
-                                item["claim_annotations"] = []
-                            li_msgs.append(item)
+                            body = item.get("message", item.get("body", str(item)))
+                            li_msgs.append({"body": body, "claim_annotations": []})
+                        elif isinstance(item, list):
+                            for m in item:
+                                if isinstance(m, dict) and "claim_annotations" not in m:
+                                    m["claim_annotations"] = []
+                            li_msgs.extend(item)
+
+            # Distribute sequence-level annotations to first email
+            if annotations and emails and not emails[0].get("claim_annotations"):
+                emails[0]["claim_annotations"] = annotations
+
             sequences.append({
                 "contact_name":      contact.get("name", ""),
                 "contact_title":     contact.get("title", ""),
@@ -1252,33 +1347,111 @@ def _normalize_outreach(outreach_data: dict) -> dict:
             })
         return {"sequences": sequences}
 
-    # Handle flat sequences dict (email_1, email_2 at top level)
-    if any(k.startswith("email") for k in outreach_data.keys()):
-        emails  = []
-        li_msgs = []
-        for key in sorted(outreach_data.keys()):
-            item = outreach_data[key]
-            if key.startswith("email"):
-                if isinstance(item, str):
-                    emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
-                elif isinstance(item, dict):
-                    if "claim_annotations" not in item:
-                        item["claim_annotations"] = []
-                    emails.append(item)
-            elif key.startswith("linkedin"):
-                if isinstance(item, str):
-                    li_msgs.append({"body": item, "claim_annotations": []})
-                elif isinstance(item, dict):
-                    if "claim_annotations" not in item:
-                        item["claim_annotations"] = []
-                    li_msgs.append(item)
+    # Handle flat dict with email_1, linkedin keys at top level
+    emails      = []
+    li_msgs     = []
+    annotations = outreach_data.get("claim_annotations", [])
+
+    for key in sorted(outreach_data.keys()):
+        if key == "claim_annotations":
+            continue
+        item = outreach_data[key]
+        if key.startswith("email"):
+            if isinstance(item, str):
+                emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
+            elif isinstance(item, dict):
+                if "claim_annotations" not in item:
+                    item["claim_annotations"] = []
+                emails.append(item)
+        elif key in ("linkedin", "linkedin_messages") or key.startswith("linkedin"):
+            if isinstance(item, str):
+                li_msgs.append({"body": item, "claim_annotations": []})
+            elif isinstance(item, dict):
+                body = item.get("message", item.get("body", str(item)))
+                li_msgs.append({"body": body, "claim_annotations": []})
+            elif isinstance(item, list):
+                for m in item:
+                    if isinstance(m, dict) and "claim_annotations" not in m:
+                        m["claim_annotations"] = []
+                li_msgs.extend(item)
+
+    # Distribute annotations to first email
+    if annotations and emails and not emails[0].get("claim_annotations"):
+        emails[0]["claim_annotations"] = annotations
+
+    if emails or li_msgs:
         return {"sequences": [{"contact_name": "", "contact_title": "",
                                "emails": emails, "linkedin_messages": li_msgs}]}
 
     return outreach_data
-    
+
+
+def _render_claim_annotations(annotations: list) -> str:
+    if not annotations:
+        return ""
+
+    flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
+    unverified_count = len(flags)
+
+    out  = f"<details style='margin-top:8px;'>"
+    out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
+            f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
+            f"display:flex;align-items:center;gap:8px;'>"
+            f"🔍 Claim annotations ({len(annotations)})")
+    if unverified_count:
+        out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
+    out += "</summary>"
+    out += f"<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
+
+    for ann in annotations:
+        if not isinstance(ann, dict):
+            continue
+        claim      = _e(ann.get("claim", ""))
+        basis      = _e(ann.get("basis", ""))
+        source     = ann.get("source", "")
+        src_type   = _e(ann.get("source_type", ""))
+        confidence = ann.get("confidence", "confirmed")
+        flag       = ann.get("flag", "")
+
+        bg_color     = "#FFF7ED" if flag else "#F8FAFF"
+        border_color = "#FED7AA" if flag else "#E2E8F8"
+        conf_color   = (
+            "#16A34A" if confidence == "confirmed"
+            else "#D97706" if confidence == "inferred"
+            else "#94A3B8"
+        )
+
+        out += (f"<div style='padding:10px 14px;background:{bg_color};"
+                f"border-bottom:1px solid {border_color};font-size:12px;'>")
+        out += f"<div style='margin-bottom:4px;'>"
+        out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
+        out += f"<span style='font-style:italic;color:#334155;'>{claim}</span>"
+        out += "</div>"
+
+        if basis:
+            out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
+
+        out += f"<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
+        if source:
+            if source.startswith("http"):
+                out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
+            else:
+                out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
+        out += (f"<span style='color:{conf_color};font-size:10px;font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>")
+        if flag:
+            out += (f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;"
+                    f"border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>")
+        out += "</div></div>"
+
+    out += "</div></details>"
+    return out
+
+
 def _outreach_section(outreach_data: dict) -> str:
-    outreach_data = _normalize_outreach(outreach_data)  # ← add this line
+    # v5.4: normalize before rendering — handles all subagent output shapes
+    outreach_data = _normalize_outreach(outreach_data)
+
     if not outreach_data:
         return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
 
@@ -1308,14 +1481,11 @@ def _outreach_section(outreach_data: dict) -> str:
                     subj        = _e(email.get("subject", f"Email {i}"))
                     body        = _e(email.get("body", ""))
                     annotations = email.get("claim_annotations", [])
-
                     out += f"<div style='margin-bottom:20px;'>"
                     out += f"<b style='font-size:13px;color:{NAVY};'>Email {i}: {subj}</b>"
                     out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
-
                     if annotations:
                         out += _render_claim_annotations(annotations)
-
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(email))}</pre>"
@@ -1326,14 +1496,11 @@ def _outreach_section(outreach_data: dict) -> str:
                 if isinstance(msg, dict):
                     body        = _e(msg.get("body", "") or msg.get("message", ""))
                     annotations = msg.get("claim_annotations", [])
-
                     out += f"<div style='margin-bottom:16px;'>"
                     out += f"<b style='font-size:13px;color:{NAVY};'>LinkedIn {i}</b>"
                     out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
-
                     if annotations:
                         out += _render_claim_annotations(annotations)
-
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
@@ -1341,86 +1508,6 @@ def _outreach_section(outreach_data: dict) -> str:
         out += "</div>"
     return out
 
-def _render_claim_annotations(annotations: list) -> str:
-    """
-    Render claim annotations as a collapsible AE-only reference section
-    below each email/LinkedIn message.
-    """
-    if not annotations:
-        return ""
-
-    flags   = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
-    clean   = [a for a in annotations if isinstance(a, dict) and not a.get("flag")]
-    unverified_count = len(flags)
-
-    uid = f"ann_{id(annotations)}"
-
-    out  = f"<details style='margin-top:8px;'>"
-    out += f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
-    out += f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
-    out += f"display:flex;align-items:center;gap:8px;'>"
-    out += f"🔍 Claim annotations ({len(annotations)})"
-    if unverified_count:
-        out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
-    out += "</summary>"
-    out += f"<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
-
-    for j, ann in enumerate(annotations):
-        if not isinstance(ann, dict):
-            continue
-        claim      = _e(ann.get("claim", ""))
-        basis      = _e(ann.get("basis", ""))
-        source     = ann.get("source", "")
-        src_type   = _e(ann.get("source_type", ""))
-        confidence = ann.get("confidence", "confirmed")
-        flag       = ann.get("flag", "")
-
-        bg_color = "#FFF7ED" if flag else "#F8FAFF"
-        border_color = "#FED7AA" if flag else "#E2E8F8"
-        conf_color = (
-            "#16A34A" if confidence == "confirmed"
-            else "#D97706" if confidence == "inferred"
-            else "#94A3B8"
-        )
-
-        out += (
-            f"<div style='padding:10px 14px;background:{bg_color};"
-            f"border-bottom:1px solid {border_color};font-size:12px;'>"
-        )
-
-        out += f"<div style='margin-bottom:4px;'>"
-        out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
-        out += f"<span style='font-style:italic;color:#334155;'>{claim}</span>"
-        out += "</div>"
-
-        if basis:
-            out += f"<div style='margin-bottom:4px;color:#475569;'>"
-            out += f"<span style='font-weight:600;'>Basis:</span> {basis}"
-            out += "</div>"
-
-        out += f"<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
-
-        if source:
-            if source.startswith("http"):
-                out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
-            else:
-                out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
-
-        out += (
-            f"<span style='color:{conf_color};font-size:10px;font-weight:700;"
-            f"text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
-        )
-
-        if flag:
-            out += (
-                f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;"
-                f"border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
-            )
-
-        out += "</div></div>"
-
-    out += "</div></details>"
-    return out
 
 def _get_tabs(phase: int) -> list:
     tabs = [
@@ -1440,6 +1527,7 @@ def _get_tabs(phase: int) -> list:
         tabs.append(("outreach", "✉️ Outreach"))
     return tabs
 
+
 def _build_html_page(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head>"
@@ -1452,6 +1540,7 @@ def _build_html_page(title: str, body: str) -> str:
         + _JS
         + "</body></html>"
     )
+
 
 def build_pg_report(
     slug:            str,
@@ -1565,10 +1654,9 @@ def build_pg_report(
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.3] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.4] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-
-def build_onepager(
+    def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1781,5 +1869,5 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.3] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.4] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
