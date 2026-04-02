@@ -210,16 +210,13 @@ def _company_overview_section(raw: dict) -> str:
     news = wr.get("recent_news", [])
     prio = wr.get("strategic_priorities", [])
     out  = _section_header("🏢", "Company Overview")
-
     desc_text = _text(desc)
     if desc_text:
         out += _card(f"<p style='margin:0;font-size:14px;line-height:1.7;'>{_e(desc_text)}{_src_badge(desc)}</p>")
-
     if prio:
         out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Strategic Priorities</h3><ul style='margin:0;padding-left:20px;'>"
         for p in prio[:5]: out += f"<li style='margin-bottom:6px;'>{_render_item(p)}</li>"
         out += "</ul>"
-
     if news:
         out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Recent News</h3>"
         for n in news[:4]:
@@ -233,7 +230,6 @@ def _company_overview_section(raw: dict) -> str:
                 out += "</div>"
             else:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
-
     return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
 
 
@@ -248,7 +244,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         title = exec_data.get("title", "")
         if name and name.strip():
             stakeholders.append({"name": name.strip(), "title": title or "", "is_champion": False, "is_eb": False, "source": "exec_profiles"})
-
     sfdc      = ts_data.get("sfdc_stakeholder", {})
     sfdc_rows = sfdc.get("data_rows", [])
     sfdc_cols = sfdc.get("column_names", [])
@@ -260,7 +255,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
             existing = {s["name"].lower() for s in stakeholders}
             if exec_sponsor.lower() not in existing:
                 stakeholders.append({"name": exec_sponsor.strip(), "title": "Executive Business Sponsor", "is_champion": False, "is_eb": False, "source": "sfdc"})
-
     medd      = ts_data.get("meddpicc_detail", {})
     medd_rows = medd.get("data_rows", [])
     medd_cols = medd.get("column_names", [])
@@ -269,7 +263,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         rec = dict(zip(medd_cols, medd_rows[0])) if isinstance(medd_rows[0], list) else medd_rows[0]
         champion_name = rec.get("Opportunity Gong Champion", "") or ""
         eb_name       = rec.get("Opportunity Gong Economic Buyer", "") or ""
-
     if champion_name and champion_name.strip():
         existing = {s["name"].lower() for s in stakeholders}
         if champion_name.lower() not in existing:
@@ -278,14 +271,11 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         existing = {s["name"].lower() for s in stakeholders}
         if eb_name.lower() not in existing:
             stakeholders.append({"name": eb_name.strip(), "title": "", "is_champion": False, "is_eb": True, "source": "gong"})
-
     for s in stakeholders:
         if champion_name and champion_name.lower() in s["name"].lower(): s["is_champion"] = True
         if eb_name and eb_name.lower() in s["name"].lower(): s["is_eb"] = True
-
     legs: dict = {"DATA": [], "BUSINESS": [], "IT": [], "ANALYST": [], "UNKNOWN": []}
     for s in stakeholders: legs[_classify_leg(s["title"])].append(s)
-
     out = "<div class='stool-grid'>"
     for row_pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]:
         for leg_key in row_pair:
@@ -308,7 +298,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
                     out += "</div>"
             out += "</div>"
     out += "</div>"
-
     if legs["UNKNOWN"]:
         out += "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Unclassified: " + ", ".join(_e(s["name"]) for s in legs["UNKNOWN"]) + "</p>"
     if not stakeholders:
@@ -329,14 +318,12 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     flags     = ts_data.get("meddpicc_flags", {})
     flag_rows = flags.get("data_rows", [])
     flag_cols = flags.get("column_names", [])
-
     opp_owner = cs_name = exec_sponsor = ""
     if rows and cols:
         rec = dict(zip(cols, rows[0])) if isinstance(rows[0], list) else rows[0]
         opp_owner    = rec.get("Opportunity Owner Name", "")
         cs_name      = rec.get("Opportunity CS Name", "")
         exec_sponsor = rec.get("Executive Business Sponsor [For Calculation]", "")
-
     champion_name = eb_name = ""
     champion_valid = eb_valid = False
     if medd_rows and medd_cols:
@@ -347,30 +334,25 @@ def _stakeholder_map_section(ts_data: dict) -> str:
         rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
         champion_valid = bool(rec.get("Opportunity Gong Champion Validated"))
         eb_valid       = bool(rec.get("Opportunity Gong Economic Buyer Validated"))
-
     def _fmt(val, label):
         if val and val.strip(): return _e(val)
         return f"<span class='flag'>⚠️ {_e(label)}</span>"
-
     if champion_valid and not champion_name:
         champ_display = "<span class='flag'>⚠️ Validated in Gong but name not captured</span>"
     elif champion_name:
         champ_display = _e(champion_name) + ("" if champion_valid else " <span class='flag'>(unconfirmed)</span>")
     else:
         champ_display = "<span class='flag'>⚠️ Not identified — prioritize discovery</span>"
-
     if eb_valid and not eb_name:
         eb_display = "<span class='flag'>⚠️ Validated in Gong but name not captured</span>"
     elif eb_name:
         eb_display = _e(eb_name) + ("" if eb_valid else " <span class='flag'>(unconfirmed)</span>")
     else:
         eb_display = "<span class='flag'>⚠️ Not identified — prioritize discovery</span>"
-
     crossref = ""
     if champion_name and exec_sponsor and champion_name.lower() != exec_sponsor.lower():
         crossref = (f"<div style='background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:12px;color:#9a3412;'>"
                     f"⚠️ Gong Champion ({_e(champion_name)}) differs from SFDC Exec Sponsor ({_e(exec_sponsor)}) — verify.</div>")
-
     out  = "<table><thead><tr><th>Role</th><th>Name</th></tr></thead><tbody>"
     out += f"<tr><td>🏆 Champion</td><td>{champ_display}</td></tr>"
     out += f"<tr><td>💰 Economic Buyer</td><td>{eb_display}</td></tr>"
@@ -384,7 +366,6 @@ def _stakeholder_map_section(ts_data: dict) -> str:
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
         return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
-
     top_key        = matched_drivers[0].get("key", "") if isinstance(matched_drivers[0], dict) else matched_drivers[0]
     signals        = get_money_signals(top_key)
     driver         = get_drivers(top_key)
@@ -394,12 +375,10 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
     pain_pts       = driver.get("pain_points", []) if driver else []
     financial_hook = money_in[0] if money_in else (money_out[0] if money_out else "")
     pain_signal    = pain_pts[0] if pain_pts else ""
-
     ep        = raw.get("exec_profiles", {})
     execs     = ep.get("executives", [])
     exec_name = execs[0].get("name", "") if execs and isinstance(execs[0], dict) else ""
     addressee = _e(exec_name) if exec_name else f"your team at {_e(account_name)}"
-
     tp_text = ""
     if pain_signal: tp_text += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
     if financial_hook:
@@ -408,7 +387,6 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
                     f"data investment actually pay off. Worth a conversation to see if the timing is right?")
     else:
         tp_text += "<span style='color:#93C5FD;'>⚠️ No financial signal found — generic value used</span>"
-
     return f"<div class='talking-point'><div class='talking-point-label'>💡 Talking Point · {_e(label)}</div><p>{tp_text}</p></div>"
 
 
@@ -416,18 +394,15 @@ def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
     if not roles: return "<p style='color:#94A3B8;'>No role data available.</p>"
-
     total  = t.get("total_open_roles", "")
     trends = t.get("hiring_trends", [])
     out    = ""
-
     if total or trends:
         meta = f"<b>{total} open roles</b>" if total else ""
         if trends:
             trend_text = "; ".join((tr.get("trend", "") if isinstance(tr, dict) else str(tr)) for tr in trends[:2])
             meta += (f" · {trend_text}" if meta else trend_text)
         if meta: out += _card(f"<p style='margin:0;font-size:13px;'>{meta}</p>")
-
     out += "<table><thead><tr><th>Role</th><th>Dept</th><th>Location</th><th>Posted</th></tr></thead><tbody>"
     for r in roles[:10]:
         if isinstance(r, dict):
@@ -446,10 +421,8 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
     confirmed = ci.get("tools_confirmed", [])
     suspected = ci.get("tools_suspected", [])
     disp_sum  = ci.get("displacement_summary", "")
-
     if not confirmed and not suspected and not disp_sum:
         return "<p style='color:#94A3B8;'>No competitor data available.</p>"
-
     out = ""
     if confirmed:
         for t in confirmed:
@@ -464,7 +437,6 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
             meta_parts.append(f"<b>TS Angle:</b> <span style='color:{BLUE};'>{angle}</span>" if angle else "<span class='flag'>⚠️ No ThoughtSpot angle identified</span>")
             if fit: meta_parts.append(f"<b>Fit Signal:</b> <span style='color:#16A34A;'>{fit}</span>")
             out += _signal_card(tool, "<br>".join(meta_parts))
-
     if suspected:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3><ul style='margin:0;padding-left:16px;'>"
         for t in suspected[:5]:
@@ -473,14 +445,12 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
                 pill_color = "pill-red" if conf == "high" else "pill-orange" if conf == "medium" else "pill-blue"
                 out += f"<li style='margin-bottom:6px;font-size:13px;'><b>{_e(t.get('tool', ''))}</b> <span class='pill {pill_color}'>{conf}</span>{'— ' + _e(_text(t.get('evidence', ''))) if t.get('evidence') else ''}</li>"
         out += "</ul>"
-
     if disp_sum: out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
 
 
 def _value_drivers_section(matched_drivers: list) -> str:
     if not matched_drivers: return "<p style='color:#94A3B8;'>No value driver data available.</p>"
-
     out = ""
     for m in matched_drivers:
         key    = m.get("key", "") if isinstance(m, dict) else m
@@ -501,12 +471,10 @@ def _value_drivers_section(matched_drivers: list) -> str:
 
 def _deal_story_section(ts_data: dict) -> str:
     import re as _re
-
     ds_result  = ts_data.get("deal_stage", {})
     ft_result  = ts_data.get("deal_funnel_timing", {})
     act_result = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
     opp_detail = ts_data.get("opp_detail", {})
-
     ds_rows  = ds_result.get("data_rows", [])
     ds_cols  = ds_result.get("column_names", [])
     ft_rows  = ft_result.get("data_rows", [])
@@ -515,9 +483,7 @@ def _deal_story_section(ts_data: dict) -> str:
     act_cols = act_result.get("column_names", [])
     od_rows  = opp_detail.get("data_rows", [])
     od_cols  = opp_detail.get("column_names", [])
-
     if not ds_rows: return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
-
     ds_rec   = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
     opp_name = (ds_rec.get("Opportunity Name", "") or ds_rec.get("SFDC Opp Name URL", "") or ds_rec.get("Opportunity Name with url", "") or "")
     opp_name = _e(opp_name) if opp_name else "(opportunity)"
@@ -526,7 +492,6 @@ def _deal_story_section(ts_data: dict) -> str:
     pq       = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
     created  = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
     last_act = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
-
     days_cold = prior_close = None
     if od_rows:
         od_rec      = dict(zip(od_cols, od_rows[0])) if isinstance(od_rows[0], list) else od_rows[0]
@@ -535,9 +500,7 @@ def _deal_story_section(ts_data: dict) -> str:
         if not created:  created  = _decode_ts_date(od_rec.get("Month(Opportunity Created Date)", ""))
         if not last_act: last_act = _decode_ts_date(od_rec.get("Month(Opportunity Last Activity Date)", ""))
         if not owner:    owner    = _e(od_rec.get("Opportunity Owner Name", ""))
-
     deal_class = _classify_deal(int(days_cold) if days_cold is not None else None, act_rows, act_cols)
-
     ft_rec = {}
     has_ft_values = False
     if ft_rows:
@@ -549,7 +512,6 @@ def _deal_story_section(ts_data: dict) -> str:
                       "f Opportunity S1 Duration", "f Opportunity S2 Duration",
                       "f Opportunity S3 Duration", "f Opportunity M0 to S7 Duration"]
         )
-
     CLASS_BADGES = {
         "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
         "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
@@ -559,12 +521,10 @@ def _deal_story_section(ts_data: dict) -> str:
         "unknown":  ("", "#64748B"),
     }
     badge_html, dc_color = CLASS_BADGES.get(deal_class, ("", "#64748B"))
-
     out  = f"<div class='opp-card'><b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
     if stage:      out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
     if pq:         out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
     if badge_html: out += badge_html
-
     meta = []
     if owner:       meta.append(f"Owner: {owner}")
     if created:     meta.append(f"Created: {created}")
@@ -576,14 +536,12 @@ def _deal_story_section(ts_data: dict) -> str:
     if meta:
         out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>" + " &nbsp;·&nbsp; ".join(meta) + "</div>"
     out += "</div>"
-
     if act_rows:
         type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅", "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
         date_idx  = next((act_cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in act_cols), -1)
         type_idx  = act_cols.index("Activity Type")      if "Activity Type"      in act_cols else -1
         subj_idx  = act_cols.index("Activity Subject")   if "Activity Subject"   in act_cols else -1
         owner_idx = act_cols.index("Activity Owner Name") if "Activity Owner Name" in act_cols else -1
-
         out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:20px 0 10px;'>All Account Activity ({len(act_rows)} touches)</p>"
         out += f"<table style='width:100%;border-collapse:collapse;font-size:12px;'><thead><tr style='background:#F8FAFF;'>"
         out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>"
@@ -592,7 +550,6 @@ def _deal_story_section(ts_data: dict) -> str:
         out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>"
         out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>"
         out += "</tr></thead><tbody>"
-
         for i, row in enumerate(act_rows[:30]):
             row = row if isinstance(row, list) else list(row.values())
             date_val   = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
@@ -614,7 +571,6 @@ def _deal_story_section(ts_data: dict) -> str:
                     f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;font-style:italic;'>{_e(owner_val)}</td>"
                     f"</tr>")
         out += "</tbody></table>"
-
     if has_ft_values:
         timing_map = [
             ("Total f Opportunity S1 Duration", "f Opportunity S1 Duration", "S1"),
@@ -631,7 +587,6 @@ def _deal_story_section(ts_data: dict) -> str:
                 out += (f"<tr><td style='padding:6px 12px;color:#475569;border-bottom:1px solid #F1F5F9;'>{label}</td>"
                         f"<td style='padding:6px 12px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(str(val))}</td></tr>")
         out += "</tbody></table>"
-
     if deal_class in ("ghost", "cold", "stalled", "sdr_only"):
         dc_str   = f"{int(days_cold)}d" if days_cold is not None else "extended time"
         sdr_li   = "<li>All prior touches were <strong>SDR-level or automated</strong> — no AE or SE has had a real conversation with this account</li>" if deal_class == "sdr_only" else ""
@@ -663,13 +618,11 @@ def _activity_section(ts_data: dict) -> str:
     rows = act.get("data_rows", [])
     cols = act.get("column_names", [])
     if not rows: return "<p style='color:#94A3B8;'>No activity history available.</p>"
-
     date_idx  = next((cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in cols), -1)
     type_idx  = cols.index("Activity Type")      if "Activity Type"      in cols else -1
     subj_idx  = cols.index("Activity Subject")   if "Activity Subject"   in cols else -1
     owner_idx = cols.index("Activity Owner Name") if "Activity Owner Name" in cols else -1
     type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅", "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
-
     out = (f"<table style='width:100%;border-collapse:collapse;font-size:12px;'><thead><tr style='background:#F8FAFF;'>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>"
@@ -709,12 +662,10 @@ def _sales_call_section(ts_data: dict) -> str:
     det_rows  = detail.get("data_rows", [])
     det_cols  = detail.get("column_names", [])
     if not flag_rows and not det_rows: return "<p style='color:#94A3B8;'>No sales call data available.</p>"
-
     flag_rec = {}
     det_rec  = {}
     if flag_rows and flag_cols: flag_rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
     if det_rows and det_cols:   det_rec  = dict(zip(det_cols,  det_rows[0]))  if isinstance(det_rows[0], list)  else det_rows[0]
-
     gong_fields = [
         ("Opportunity Gong Champion Validated",        "Opportunity Gong Champion",         "Champion"),
         ("Opportunity Gong Economic Buyer Validated",  "Opportunity Gong Economic Buyer",   "Economic Buyer"),
@@ -743,14 +694,12 @@ def _sales_call_section(ts_data: dict) -> str:
 def _gong_calls_section(raw: dict) -> str:
     calls = raw.get("sales_calls", {})
     if not calls: return "<p style='color:#94A3B8;'>No Gong call data available.</p>"
-
     signals    = calls.get("signals",         calls.get("call_summaries", []))
     total      = calls.get("total_rows",      calls.get("total_calls_found", 0))
     meaningful = calls.get("meaningful_count", calls.get("meaningful_calls", 0))
     voicemail  = calls.get("voicemail_count",  calls.get("voicemail_calls", 0))
     no_content = calls.get("no_content_count", calls.get("no_content_calls", 0))
     next_steps = calls.get("consolidated_next_steps", [])
-
     out = _card(
         f"<div style='display:flex;gap:32px;'>"
         f"<div><div style='font-size:22px;font-weight:800;color:{NAVY};'>{total}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>Total</div></div>"
@@ -759,7 +708,6 @@ def _gong_calls_section(raw: dict) -> str:
         f"<div><div style='font-size:22px;font-weight:800;color:#94A3B8;'>{no_content}</div><div style='font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;'>No Content</div></div>"
         f"</div>"
     )
-
     if signals:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Call Signals</h3>"
         for s in signals[:10]:
@@ -780,7 +728,6 @@ def _gong_calls_section(raw: dict) -> str:
             if next_s:  out += f"<p style='margin:0 0 4px;font-size:12px;'><b>Next Steps:</b> {next_s}</p>"
             if action:  out += f"<p style='margin:0;font-size:12px;color:{BLUE};'><b>→ {action}</b></p>"
             out += "</div>"
-
     if next_steps:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Consolidated Next Steps</h3>"
         out += "<table><thead><tr><th>Priority</th><th>Contact</th><th>Action</th><th>Owner</th></tr></thead><tbody>"
@@ -792,12 +739,10 @@ def _gong_calls_section(raw: dict) -> str:
                     f"<td>{_e(ns.get('contact', ''))}</td><td>{_e(ns.get('action', ''))}</td><td>{_e(ns.get('owner', ''))}</td></tr>")
         out += "</tbody></table>"
     return out
-
-def _6sense_section(ts_data: dict) -> str:
+    def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
     if not rows: return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
-
     out = "<table><thead><tr><th>Account</th><th>Intent Grade</th><th>Reach Grade</th></tr></thead><tbody>"
     for row in rows[:10]:
         rec = dict(zip(cols, row)) if isinstance(row, list) else row
@@ -814,7 +759,6 @@ def _6sense_section(ts_data: dict) -> str:
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
     if not studies: return "<p style='color:#94A3B8;'>No case studies matched.</p>"
-
     out = "<div style='display:flex;flex-direction:column;gap:12px;'>"
     for s in studies[:5]:
         if not isinstance(s, dict): continue
@@ -837,7 +781,6 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
 def _exec_profiles_section(raw: dict) -> str:
     execs = raw.get("exec_profiles", {}).get("executives", [])
     if not execs: return "<p style='color:#94A3B8;'>No executive profiles available.</p>"
-
     out = ""
     for exec_data in execs[:5]:
         if not isinstance(exec_data, dict): continue
@@ -847,7 +790,6 @@ def _exec_profiles_section(raw: dict) -> str:
         bio      = exec_data.get("bio_summary", {})
         quotes   = exec_data.get("public_quotes", [])
         activity = exec_data.get("recent_activity", [])
-
         out += "<div class='exec-card'>"
         out += (f"<div style='display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;'>"
                 f"<div><div style='font-weight:700;font-size:15px;color:{NAVY};'>{name}</div>")
@@ -855,16 +797,13 @@ def _exec_profiles_section(raw: dict) -> str:
         out += "</div>"
         if li_url: out += f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};font-size:11px;font-weight:600;flex-shrink:0;'>LinkedIn ↗</a>"
         out += "</div>"
-
         bio_text = _text(bio)
         if bio_text: out += f"<p style='font-size:13px;color:#334155;margin:0 0 10px;'>{_e(bio_text)}{_src_badge(bio)}</p>"
-
         if activity:
             out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;'>Recent Activity</p>"
             out += "<ul style='margin:0;padding-left:16px;'>"
             for act in activity[:3]: out += f"<li style='font-size:12px;margin-bottom:4px;'>{_render_item(act)}</li>"
             out += "</ul>"
-
         if quotes:
             out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px;'>Public Quotes</p>"
             for q in quotes[:2]:
@@ -883,7 +822,6 @@ def _exec_profiles_section(raw: dict) -> str:
 
 def _normalize_outreach(outreach_data: dict) -> dict:
     if not outreach_data: return {}
-
     if "sequences" in outreach_data and isinstance(outreach_data["sequences"], list):
         for seq in outreach_data["sequences"]:
             if "linkedin" in seq and "linkedin_messages" not in seq:
@@ -896,7 +834,6 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                 else:
                     seq["linkedin_messages"] = [{"body": str(linkedin), "claim_annotations": []}]
             if "linkedin_messages" not in seq: seq["linkedin_messages"] = []
-
             seq_annotations = seq.get("claim_annotations", [])
             if seq_annotations:
                 emails = seq.get("emails", [])
@@ -910,13 +847,11 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                                 start = i * chunk
                                 end   = start + chunk if i < len(emails) - 1 else len(seq_annotations)
                                 email["claim_annotations"] = seq_annotations[start:end]
-
             for email in seq.get("emails", []):
                 if isinstance(email, dict) and "claim_annotations" not in email: email["claim_annotations"] = []
             for msg in seq.get("linkedin_messages", []):
                 if isinstance(msg, dict) and "claim_annotations" not in msg: msg["claim_annotations"] = []
         return outreach_data
-
     if "contacts" in outreach_data:
         seq_data    = outreach_data.get("sequences", {})
         annotations = outreach_data.get("claim_annotations", [])
@@ -945,7 +880,6 @@ def _normalize_outreach(outreach_data: dict) -> dict:
             sequences.append({"contact_name": contact.get("name", ""), "contact_title": contact.get("title", ""),
                                "contact_linkedin": contact.get("linkedin_url", ""), "emails": emails, "linkedin_messages": li_msgs})
         return {"sequences": sequences}
-
     emails      = []
     li_msgs     = []
     annotations = outreach_data.get("claim_annotations", [])
@@ -974,10 +908,8 @@ def _normalize_outreach(outreach_data: dict) -> dict:
 
 def _render_claim_annotations(annotations: list) -> str:
     if not annotations: return ""
-
     flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
     unverified_count = len(flags)
-
     out  = "<details style='margin-top:8px;'>"
     out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
             f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
@@ -986,7 +918,6 @@ def _render_claim_annotations(annotations: list) -> str:
         out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
     out += "</summary>"
     out += "<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
-
     for ann in annotations:
         if not isinstance(ann, dict): continue
         claim      = _e(ann.get("claim", ""))
@@ -995,11 +926,9 @@ def _render_claim_annotations(annotations: list) -> str:
         src_type   = _e(ann.get("source_type", ""))
         confidence = ann.get("confidence", "confirmed")
         flag       = ann.get("flag", "")
-
         bg_color     = "#FFF7ED" if flag else "#F8FAFF"
         border_color = "#FED7AA" if flag else "#E2E8F8"
         conf_color   = "#16A34A" if confidence == "confirmed" else "#D97706" if confidence == "inferred" else "#94A3B8"
-
         out += f"<div style='padding:10px 14px;background:{bg_color};border-bottom:1px solid {border_color};font-size:12px;'>"
         out += f"<div style='margin-bottom:4px;'><span style='font-weight:600;color:{NAVY};'>Claim:</span> <span style='font-style:italic;color:#334155;'>{claim}</span></div>"
         if basis: out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
@@ -1010,7 +939,6 @@ def _render_claim_annotations(annotations: list) -> str:
         out += f"<span style='color:{conf_color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
         if flag: out += f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
         out += "</div></div>"
-
     out += "</div></details>"
     return out
 
@@ -1018,10 +946,8 @@ def _render_claim_annotations(annotations: list) -> str:
 def _outreach_section(outreach_data: dict) -> str:
     outreach_data = _normalize_outreach(outreach_data)
     if not outreach_data: return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
-
     sequences = outreach_data.get("sequences", [])
     if not sequences: return "<p style='color:#94A3B8;'>No outreach sequences available.</p>"
-
     out = ""
     for seq in sequences:
         if not isinstance(seq, dict): continue
@@ -1029,12 +955,10 @@ def _outreach_section(outreach_data: dict) -> str:
         title   = _e(seq.get("contact_title", "") or seq.get("title", ""))
         emails  = seq.get("emails", [])
         li_msgs = seq.get("linkedin_messages", [])
-
         out += "<div class='exec-card'>"
         out += f"<div style='font-weight:700;font-size:15px;color:{NAVY};margin-bottom:4px;'>✉️ {name}"
         if title: out += f" <span style='font-weight:400;font-size:13px;color:#64748b;'>— {title}</span>"
         out += "</div>"
-
         if emails:
             out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>Email Sequence</p>"
             for i, email in enumerate(emails, 1):
@@ -1049,7 +973,6 @@ def _outreach_section(outreach_data: dict) -> str:
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(email))}</pre>"
-
         if li_msgs:
             out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;'>LinkedIn Sequence</p>"
             for i, msg in enumerate(li_msgs, 1):
@@ -1063,39 +986,8 @@ def _outreach_section(outreach_data: dict) -> str:
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
-
         out += "</div>"
     return out
-
-
-def _gong_calls_section(raw: dict) -> str:
-    
-    return out
-
-
-def _6sense_section(ts_data: dict) -> str:
-    
-    return out
-
-
-def _case_studies_section(raw: dict, account_name: str) -> str:
-    
-
-
-def _exec_profiles_section(raw: dict) -> str:
-    
-
-
-def _normalize_outreach(outreach_data: dict) -> dict:
-    
-
-
-def _render_claim_annotations(annotations: list) -> str:
-    
-
-
-def _outreach_section(outreach_data: dict) -> str:
-    
 
 
 def _get_tabs(phase: int) -> list:
@@ -1124,7 +1016,9 @@ def _build_html_page(title: str, body: str) -> str:
         f"<title>{_e(title)}</title>"
         + _CSS + "</head><body>" + body + _JS + "</body></html>"
     )
-  def build_pg_report(
+
+
+def build_pg_report(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1135,10 +1029,6 @@ def _build_html_page(title: str, body: str) -> str:
     outreach_data:   dict = None,
     output_dir:      str  = "/sandbox",
 ) -> dict:
-    """
-    Build a PG report HTML string with full ThoughtSpot branding.
-    Returns {"filename", "html", "slug", "phase"}
-    """
     outreach_data = outreach_data or {}
     tabs          = _get_tabs(phase)
     owner         = header_data.get("owner_name", "AE")
@@ -1174,7 +1064,6 @@ def _build_html_page(title: str, body: str) -> str:
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
-
         elif tab_id == "stakeholders":
             body += _section_header("👥", "4-Leg Stool")
             body += _four_leg_stool_section(ts_data, account_name, raw)
@@ -1182,43 +1071,33 @@ def _build_html_page(title: str, body: str) -> str:
             body += _stakeholder_map_section(ts_data)
             body += _section_header("💡", "ThoughtSpot Talking Point")
             body += _talking_point_section(account_name, matched_drivers, raw)
-
         elif tab_id == "why_ts":
             body += _section_header("🎯", "Why ThoughtSpot")
             body += _value_drivers_section(matched_drivers)
-
         elif tab_id == "competitor":
             body += _section_header("🔍", "Competitor Landscape")
             body += _competitor_section(raw, matched_drivers)
-
         elif tab_id == "deal_story":
             body += _section_header("📋", "Deal Story")
             body += _deal_story_section(ts_data)
-
         elif tab_id == "sales_call":
             body += _section_header("📞", "Sales Call Analysis")
             body += _sales_call_section(ts_data)
-
         elif tab_id == "gong_calls":
             body += _section_header("🎙", "Gong Call Signals")
             body += _gong_calls_section(raw)
-
         elif tab_id == "6sense":
             body += _section_header("📡", "6Sense Intent")
             body += _6sense_section(ts_data)
-
         elif tab_id == "roles":
             body += _section_header("💼", "Hiring Signals")
             body += _hiring_signals_section(raw)
-
         elif tab_id == "case_studies":
             body += _section_header("📚", "Recommended Case Studies")
             body += _case_studies_section(raw, account_name)
-
         elif tab_id == "exec_profiles":
             body += _section_header("🧑", "Executive Profiles")
             body += _exec_profiles_section(raw)
-
         elif tab_id == "outreach":
             body += _section_header("✉️", "Outreach Sequences")
             body += _outreach_section(outreach_data)
@@ -1233,18 +1112,15 @@ def _build_html_page(title: str, body: str) -> str:
 
     print(f"[pg_report_builder v5.4] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-  def build_onepager(
+
+
+def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
     matched_drivers: list,
     output_dir:      str = "/sandbox",
 ) -> dict:
-    """
-    Build an external customer-facing one-pager.
-    No internal data. ThoughtSpot-branded design.
-    Returns {"filename", "html", "slug"}
-    """
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
     desc     = _text(wr.get("description", {}))
@@ -1316,7 +1192,6 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
     body += f"<h1>{_e(account_name)}</h1>"
     if desc: body += f"<p class='hero-sub'>{_e(desc[:180])}</p>"
     body += "</div>"
-
     body += "<div class='content'>"
 
     if challenges:
@@ -1343,12 +1218,10 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
              "</div>")
 
     body += "</div>"
-
     body += (f"<div class='footer'>"
              f"<span class='footer-logo'>ThoughtSpot</span>"
              f"<span class='footer-tagline'>AI-Powered Analytics</span>"
              f"</div>")
-
     body += "</div>"
 
     filename = f"{slug}_onepager.html"
@@ -1365,3 +1238,4 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
 
     print(f"[pg_report_builder v5.4] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
+    
