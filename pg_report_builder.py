@@ -1,25 +1,5 @@
 """
 pg_report_builder.py — v5.4
-----------------------------------------------------------------
-Builds PG report HTML files from subagent JSON output and TS query results.
-
-v5.4 changes:
-- _gong_calls_section(): fixed key names to match subagent output
-  (total_calls_found, meaningful_calls, voicemail_calls, call_summaries)
-- _deal_story_section(): opp_name fallback chain, no longer gates section
-  on empty opp name
-- _normalize_outreach(): handles linkedin key → linkedin_messages,
-  distributes sequence-level claim_annotations to individual emails,
-  handles flat dict with email_1/linkedin keys at top level
-
-v5.3 changes:
-- Full ThoughtSpot-brand redesign
-- Hero section, section headers with icons, cards restyled
-- Print-optimized CSS
-- Tab navigation sticky at top
-
-v5.2 changes:
-- _four_leg_stool_section() uses exec_profiles as primary source
 """
 
 import datetime
@@ -27,111 +7,58 @@ import html as _html
 
 from value_drivers import get_drivers, get_money_signals
 
-
 NAVY       = "#1D2D50"
 BLUE       = "#2E5CE5"
 LIGHT_BLUE = "#EBF2FF"
 WHITE      = "#FFFFFF"
 
-LEG_COLORS = {
-    "DATA":     "#2E5CE5",
-    "BUSINESS": "#D97706",
-    "IT":       "#16A34A",
-    "ANALYST":  "#7C3AED",
-}
-
-LEG_ICONS = {
-    "DATA":     "🗄️",
-    "BUSINESS": "💼",
-    "IT":       "💻",
-    "ANALYST":  "📊",
-}
+LEG_COLORS = {"DATA": "#2E5CE5", "BUSINESS": "#D97706", "IT": "#16A34A", "ANALYST": "#7C3AED"}
+LEG_ICONS  = {"DATA": "🗄️", "BUSINESS": "💼", "IT": "💻", "ANALYST": "📊"}
 
 LEG_RULES = [
-    ("DATA", [
-        "cdo", "chief data", "chief analytics",
-        "vp data", "vp of data", "director of data", "head of data",
-        "data platform", "data engineering", "data governance",
-        "data architecture", "data products", "data science",
-        "analytics engineering", "data strategy",
-    ]),
-    ("ANALYST", [
-        "bi ", "business intelligence", "analytics", "reporting",
-        "insights", "dashboard", "visualization",
-        "data analyst", "business analyst", "analytics engineer",
-        "center of excellence", "coe",
-    ]),
-    ("IT", [
-        "cio", "cto", "chief information", "chief technology",
-        "vp technology", "vp of technology", "vp engineering",
-        "director of technology", "director of it",
-        "infrastructure", "platform", "architecture",
-        "security", "cloud", "devops", "systems",
-        "software engineering", "it ",
-    ]),
-    ("BUSINESS", [
-        "ceo", "coo", "cfo", "cmo", "president", " gm ", "general manager",
-        "svp", "evp", "managing director",
-        "head of ", "operations", "finance", "marketing",
-        "sales", "revenue", "strategy", "product",
-    ]),
+    ("DATA", ["cdo", "chief data", "chief analytics", "vp data", "vp of data", "director of data", "head of data", "data platform", "data engineering", "data governance", "data architecture", "data products", "data science", "analytics engineering", "data strategy"]),
+    ("ANALYST", ["bi ", "business intelligence", "analytics", "reporting", "insights", "dashboard", "visualization", "data analyst", "business analyst", "analytics engineer", "center of excellence", "coe"]),
+    ("IT", ["cio", "cto", "chief information", "chief technology", "vp technology", "vp of technology", "vp engineering", "director of technology", "director of it", "infrastructure", "platform", "architecture", "security", "cloud", "devops", "systems", "software engineering", "it "]),
+    ("BUSINESS", ["ceo", "coo", "cfo", "cmo", "president", " gm ", "general manager", "svp", "evp", "managing director", "head of ", "operations", "finance", "marketing", "sales", "revenue", "strategy", "product"]),
 ]
 
 
 def _e(v) -> str:
-    if v is None:
-        return ""
+    if v is None: return ""
     return _html.escape(str(v))
 
-
 def _text(v, fallback: str = "") -> str:
-    if v is None:
-        return fallback
-    if isinstance(v, str):
-        return v or fallback
+    if v is None: return fallback
+    if isinstance(v, str): return v or fallback
     if isinstance(v, dict):
-        for key in ("text", "quote", "trend", "signal",
-                    "headline", "title", "point", "summary"):
-            if v.get(key):
-                return str(v[key])
+        for key in ("text", "quote", "trend", "signal", "headline", "title", "point", "summary"):
+            if v.get(key): return str(v[key])
         return str(v)
     if isinstance(v, list):
         parts = [_text(item) for item in v[:5] if _text(item)]
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
-
 def _src_badge(v) -> str:
-    if not isinstance(v, dict):
-        return ""
+    if not isinstance(v, dict): return ""
     src      = v.get("source") or v.get("source_url") or v.get("url") or ""
     src_type = v.get("source_type", "")
-    if not src:
-        return " <span style='color:#94A3B8;font-size:10px;'>⚠️ no source</span>"
+    if not src: return " <span style='color:#94A3B8;font-size:10px;'>⚠️ no source</span>"
     if src.startswith("http"):
         label = _e(src_type or "source")
-        return (
-            f" <a href='{_e(src)}' target='_blank' "
-            f"style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
-        )
+        return f" <a href='{_e(src)}' target='_blank' style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
-
 def _render_item(v) -> str:
-    if isinstance(v, dict):
-        return _e(_text(v)) + _src_badge(v)
+    if isinstance(v, dict): return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
 
-
 def _classify_leg(title: str) -> str:
-    if not title:
-        return "UNKNOWN"
+    if not title: return "UNKNOWN"
     t = title.lower()
     for leg, keywords in LEG_RULES:
-        if any(kw in t for kw in keywords):
-            return leg
+        if any(kw in t for kw in keywords): return leg
     return "UNKNOWN"
-
 
 def _score_to_grade(score) -> str:
     try:
@@ -143,42 +70,30 @@ def _score_to_grade(score) -> str:
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
-
 def _decode_ts_date(val, fmt="%b %Y") -> str:
     from datetime import datetime
     if isinstance(val, dict):
         inner = val.get("v", val)
         if isinstance(inner, dict) and "s" in inner:
-            try:
-                return datetime.utcfromtimestamp(inner["s"]).strftime(fmt)
-            except Exception:
-                return str(inner)
-    if val is None or val == "":
-        return ""
+            try: return datetime.utcfromtimestamp(inner["s"]).strftime(fmt)
+            except Exception: return str(inner)
+    if val is None or val == "": return ""
     return str(val)
 
-
 def _classify_deal(days_cold, activity_rows, cols) -> str:
-    if days_cold is None:
-        return "unknown"
-    try:
-        dc = int(days_cold)
-    except (TypeError, ValueError):
-        return "unknown"
+    if days_cold is None: return "unknown"
+    try: dc = int(days_cold)
+    except (TypeError, ValueError): return "unknown"
     role_idx = cols.index("Activity Owner Role") if "Activity Owner Role" in cols else -1
     if role_idx >= 0 and activity_rows:
         roles = set()
         for r in activity_rows:
-            if isinstance(r, list) and len(r) > role_idx:
-                roles.add(str(r[role_idx]))
-        ae_roles = {r for r in roles if r and any(
-            k in r for k in ("AE", "Account Executive", " SE ", "Solutions Engineer", "Sales Engineer")
-        )}
-        if not ae_roles and roles - {"", "None", "nan"}:
-            return "sdr_only"
-    if dc > 365:  return "ghost"
-    if dc > 180:  return "cold"
-    if dc > 60:   return "stalled"
+            if isinstance(r, list) and len(r) > role_idx: roles.add(str(r[role_idx]))
+        ae_roles = {r for r in roles if r and any(k in r for k in ("AE", "Account Executive", " SE ", "Solutions Engineer", "Sales Engineer"))}
+        if not ae_roles and roles - {"", "None", "nan"}: return "sdr_only"
+    if dc > 365: return "ghost"
+    if dc > 180: return "cold"
+    if dc > 60:  return "stalled"
     return "live"
 
 
@@ -186,188 +101,76 @@ _CSS = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *, *::before, *::after {{ box-sizing: border-box; }}
-body {{
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    margin: 0; padding: 0; background: #f0f4ff; color: #0f172a;
-    font-size: 14px; line-height: 1.6;
-}}
-.page {{
-    max-width: 960px; margin: 32px auto; background: white;
-    border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden;
-}}
-.hero {{
-    background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%);
-    padding: 52px 60px 44px; color: white; position: relative; overflow: hidden;
-}}
-.hero::before {{
-    content: ''; position: absolute; top: -80px; right: -80px;
-    width: 360px; height: 360px;
-    background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%);
-    pointer-events: none;
-}}
-.hero-eyebrow {{
-    font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
-    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
-    position: relative; z-index: 1;
-}}
-.hero h1 {{
-    font-size: 40px; font-weight: 800; margin: 0 0 10px; line-height: 1.1;
-    letter-spacing: -0.5px; position: relative; z-index: 1;
-}}
-.hero-sub {{
-    font-size: 15px; opacity: 0.65; margin: 0 0 32px;
-    position: relative; z-index: 1;
-}}
-.hero-meta {{
-    display: flex; gap: 40px; position: relative; z-index: 1;
-    padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12);
-}}
+body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; background: #f0f4ff; color: #0f172a; font-size: 14px; line-height: 1.6; }}
+.page {{ max-width: 960px; margin: 32px auto; background: white; border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden; }}
+.hero {{ background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%); padding: 52px 60px 44px; color: white; position: relative; overflow: hidden; }}
+.hero::before {{ content: ''; position: absolute; top: -80px; right: -80px; width: 360px; height: 360px; background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%); pointer-events: none; }}
+.hero-eyebrow {{ font-size: 10px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px; position: relative; z-index: 1; }}
+.hero h1 {{ font-size: 40px; font-weight: 800; margin: 0 0 10px; line-height: 1.1; letter-spacing: -0.5px; position: relative; z-index: 1; }}
+.hero-sub {{ font-size: 15px; opacity: 0.65; margin: 0 0 32px; position: relative; z-index: 1; }}
+.hero-meta {{ display: flex; gap: 40px; position: relative; z-index: 1; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12); }}
 .hero-meta-item {{ display: flex; flex-direction: column; gap: 3px; }}
-.hero-meta-label {{
-    font-size: 9px; font-weight: 700; letter-spacing: 2px;
-    text-transform: uppercase; opacity: 0.5;
-}}
+.hero-meta-label {{ font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; opacity: 0.5; }}
 .hero-meta-value {{ font-size: 13px; font-weight: 600; }}
-.tab-nav {{
-    display: flex; gap: 6px; flex-wrap: wrap; padding: 20px 60px 0;
-    background: {NAVY}; position: sticky; top: 0; z-index: 100;
-}}
-.tab-btn {{
-    padding: 10px 18px; border-radius: 8px 8px 0 0; border: none;
-    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.65);
-    cursor: pointer; font-size: 13px; font-weight: 500;
-    font-family: inherit; transition: all 0.15s;
-}}
+.tab-nav {{ display: flex; gap: 6px; flex-wrap: wrap; padding: 20px 60px 0; background: {NAVY}; position: sticky; top: 0; z-index: 100; }}
+.tab-btn {{ padding: 10px 18px; border-radius: 8px 8px 0 0; border: none; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.65); cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit; transition: all 0.15s; }}
 .tab-btn:hover {{ background: rgba(255,255,255,0.18); color: white; }}
 .tab-btn.active {{ background: white; color: {NAVY}; font-weight: 700; }}
 .tab-content {{ display: none; }}
 .tab-content.active {{ display: block; }}
 .content {{ padding: 52px 60px; }}
-.section-header {{
-    display: flex; align-items: center; gap: 14px;
-    margin: 44px 0 20px; padding-bottom: 14px;
-    border-bottom: 2px solid {LIGHT_BLUE};
-}}
+.section-header {{ display: flex; align-items: center; gap: 14px; margin: 44px 0 20px; padding-bottom: 14px; border-bottom: 2px solid {LIGHT_BLUE}; }}
 .section-header:first-child {{ margin-top: 0; }}
-.section-icon {{
-    width: 40px; height: 40px;
-    background: linear-gradient(135deg, {BLUE}, #5b7fff);
-    border-radius: 12px; display: flex; align-items: center;
-    justify-content: center; font-size: 20px; flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(46,92,229,0.3);
-}}
-.section-title {{
-    font-size: 20px; font-weight: 700; color: {NAVY};
-    margin: 0; letter-spacing: -0.3px;
-}}
-.card {{
-    background: #f8faff; border: 1px solid #e2e8f8;
-    border-radius: 12px; padding: 20px 24px; margin-bottom: 14px;
-}}
-.card-highlight {{
-    background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff);
-    border: 1px solid #c7d7f8; border-left: 4px solid {BLUE};
-    border-radius: 12px; padding: 20px 24px; margin-bottom: 14px;
-}}
-.talking-point {{
-    background: linear-gradient(135deg, {NAVY} 0%, #1e3a8a 100%);
-    color: white; border-radius: 16px; padding: 32px 36px; margin: 28px 0;
-    position: relative; overflow: hidden;
-    box-shadow: 0 4px 24px rgba(29,45,80,0.25);
-}}
-.talking-point::before {{
-    content: '💡'; position: absolute; top: -16px; right: 24px;
-    font-size: 100px; opacity: 0.06; pointer-events: none;
-}}
-.talking-point-label {{
-    font-size: 9px; font-weight: 700; letter-spacing: 2.5px;
-    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
-}}
-.talking-point p {{
-    font-size: 15px; line-height: 1.75; margin: 0;
-    position: relative; z-index: 1; opacity: 0.95;
-}}
-.stool-grid {{
-    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0;
-}}
-.stool-leg {{
-    border-radius: 14px; padding: 20px; border: 1.5px solid #e2e8f8;
-    background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-}}
+.section-icon {{ width: 40px; height: 40px; background: linear-gradient(135deg, {BLUE}, #5b7fff); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 8px rgba(46,92,229,0.3); }}
+.section-title {{ font-size: 20px; font-weight: 700; color: {NAVY}; margin: 0; letter-spacing: -0.3px; }}
+.card {{ background: #f8faff; border: 1px solid #e2e8f8; border-radius: 12px; padding: 20px 24px; margin-bottom: 14px; }}
+.card-highlight {{ background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff); border: 1px solid #c7d7f8; border-left: 4px solid {BLUE}; border-radius: 12px; padding: 20px 24px; margin-bottom: 14px; }}
+.talking-point {{ background: linear-gradient(135deg, {NAVY} 0%, #1e3a8a 100%); color: white; border-radius: 16px; padding: 32px 36px; margin: 28px 0; position: relative; overflow: hidden; box-shadow: 0 4px 24px rgba(29,45,80,0.25); }}
+.talking-point::before {{ content: '💡'; position: absolute; top: -16px; right: 24px; font-size: 100px; opacity: 0.06; pointer-events: none; }}
+.talking-point-label {{ font-size: 9px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px; }}
+.talking-point p {{ font-size: 15px; line-height: 1.75; margin: 0; position: relative; z-index: 1; opacity: 0.95; }}
+.stool-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }}
+.stool-leg {{ border-radius: 14px; padding: 20px; border: 1.5px solid #e2e8f8; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }}
 .stool-leg.empty {{ border: 2px dashed #fca5a5; background: #fff5f5; }}
-.stool-leg-header {{
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;
-}}
-.stool-leg-icon {{
-    width: 34px; height: 34px; border-radius: 9px;
-    display: flex; align-items: center; justify-content: center; font-size: 17px;
-}}
-.stool-leg-name {{
-    font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
-}}
+.stool-leg-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }}
+.stool-leg-icon {{ width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 17px; }}
+.stool-leg-name {{ font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }}
 .stool-person {{ padding: 8px 0; border-bottom: 1px solid #f8faff; }}
 .stool-person:last-child {{ border-bottom: none; padding-bottom: 0; }}
 .stool-person-name {{ font-weight: 600; color: {NAVY}; font-size: 13px; }}
 .stool-person-title {{ color: #64748b; font-size: 11px; margin-top: 2px; }}
-.badge {{
-    display: inline-block; font-size: 10px; font-weight: 700;
-    padding: 2px 8px; border-radius: 20px; margin-left: 6px;
-}}
+.badge {{ display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; margin-left: 6px; }}
 .badge-champion {{ background: #fef9c3; color: #854d0e; }}
-.badge-eb       {{ background: #dcfce7; color: #166534; }}
-table {{
-    width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;
-    border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}}
+.badge-eb {{ background: #dcfce7; color: #166534; }}
+table {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }}
 thead tr {{ background: {NAVY}; color: white; }}
-th {{
-    padding: 12px 16px; text-align: left; font-weight: 600;
-    font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase;
-}}
+th {{ padding: 12px 16px; text-align: left; font-weight: 600; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; }}
 td {{ padding: 11px 16px; border-bottom: 1px solid #f1f5f9; color: #334155; }}
 tr:last-child td {{ border-bottom: none; }}
 tr:nth-child(even) td {{ background: #f8faff; }}
-.signal-card {{
-    border: 1px solid #e2e8f8; border-left: 4px solid {BLUE};
-    border-radius: 10px; padding: 18px 22px; margin-bottom: 12px;
-    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}}
+.signal-card {{ border: 1px solid #e2e8f8; border-left: 4px solid {BLUE}; border-radius: 10px; padding: 18px 22px; margin-bottom: 12px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }}
 .signal-card-title {{ font-weight: 700; color: {NAVY}; font-size: 14px; margin-bottom: 8px; }}
 .signal-card-meta {{ font-size: 12px; color: #64748b; margin-bottom: 8px; line-height: 1.5; }}
 .money-row {{ display: flex; gap: 8px; font-size: 12px; margin: 5px 0; color: #334155; line-height: 1.5; }}
-.opp-card {{
-    background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
-    border: 1px solid #86efac; border-radius: 10px;
-    padding: 14px 18px; margin-bottom: 10px; font-size: 13px;
-}}
-.exec-card {{
-    background: white; border: 1px solid #e2e8f8; border-radius: 12px;
-    padding: 20px 24px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-}}
+.opp-card {{ background: linear-gradient(135deg, #f0fdf4, #ecfdf5); border: 1px solid #86efac; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; font-size: 13px; }}
+.exec-card {{ background: white; border: 1px solid #e2e8f8; border-radius: 12px; padding: 20px 24px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }}
 .pill {{ display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
-.pill-blue   {{ background: {LIGHT_BLUE}; color: {BLUE}; }}
-.pill-green  {{ background: #dcfce7; color: #166634; }}
+.pill-blue {{ background: {LIGHT_BLUE}; color: {BLUE}; }}
+.pill-green {{ background: #dcfce7; color: #166634; }}
 .pill-orange {{ background: #ffedd5; color: #9a3412; }}
-.pill-red    {{ background: #fee2e2; color: #991b1b; }}
+.pill-red {{ background: #fee2e2; color: #991b1b; }}
 .flag {{ color: #dc2626; font-size: 12px; font-weight: 600; }}
 @media print {{
     body {{ background: white; font-size: 11px; }}
     .page {{ max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; }}
-    .hero {{
-        padding: 36px 44px 30px;
-        -webkit-print-color-adjust: exact; print-color-adjust: exact;
-    }}
+    .hero {{ padding: 36px 44px 30px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     .content {{ padding: 36px 44px; }}
     .tab-nav {{ display: none !important; }}
     .tab-content {{ display: block !important; }}
     .section-header {{ break-after: avoid; }}
-    .card, .card-highlight, .signal-card, .stool-grid,
-    .talking-point, .opp-card, .exec-card {{ break-inside: avoid; }}
+    .card, .card-highlight, .signal-card, .stool-grid, .talking-point, .opp-card, .exec-card {{ break-inside: avoid; }}
     table {{ break-inside: avoid; }}
-    .talking-point, .section-icon {{
-        -webkit-print-color-adjust: exact; print-color-adjust: exact;
-    }}
+    .talking-point, .section-icon {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     .page-break {{ page-break-before: always; }}
 }}
 </style>
@@ -376,40 +179,27 @@ tr:nth-child(even) td {{ background: #f8faff; }}
 _JS = """
 <script>
 function showTab(slug, tabId) {
-    document.querySelectorAll('.tab-content-' + slug)
-            .forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn-' + slug)
-            .forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-content-' + slug).forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn-' + slug).forEach(el => el.classList.remove('active'));
     document.getElementById(slug + '_' + tabId).classList.add('active');
-    document.querySelector('.tab-btn-' + slug + '[data-tab="' + tabId + '"]')
-            .classList.add('active');
+    document.querySelector('.tab-btn-' + slug + '[data-tab="' + tabId + '"]').classList.add('active');
 }
 </script>
 """
 
 
 def _section_header(icon: str, title: str) -> str:
-    return (
-        f"<div class='section-header'>"
-        f"<div class='section-icon'>{icon}</div>"
-        f"<h2 class='section-title'>{_e(title)}</h2>"
-        f"</div>"
-    )
-
+    return f"<div class='section-header'><div class='section-icon'>{icon}</div><h2 class='section-title'>{_e(title)}</h2></div>"
 
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
 
-
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
-    out  = f"<div class='signal-card'>"
-    out += f"<div class='signal-card-title'>{title}</div>"
-    if meta:
-        out += f"<div class='signal-card-meta'>{meta}</div>"
+    out  = f"<div class='signal-card'><div class='signal-card-title'>{title}</div>"
+    if meta: out += f"<div class='signal-card-meta'>{meta}</div>"
     if bullets:
-        for b in bullets:
-            out += f"<div class='money-row'><span>{b}</span></div>"
+        for b in bullets: out += f"<div class='money-row'><span>{b}</span></div>"
     out += "</div>"
     return out
 
@@ -423,16 +213,11 @@ def _company_overview_section(raw: dict) -> str:
 
     desc_text = _text(desc)
     if desc_text:
-        out += _card(
-            f"<p style='margin:0;font-size:14px;line-height:1.7;'>"
-            f"{_e(desc_text)}{_src_badge(desc)}</p>"
-        )
+        out += _card(f"<p style='margin:0;font-size:14px;line-height:1.7;'>{_e(desc_text)}{_src_badge(desc)}</p>")
 
     if prio:
-        out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Strategic Priorities</h3>"
-        out += "<ul style='margin:0;padding-left:20px;'>"
-        for p in prio[:5]:
-            out += f"<li style='margin-bottom:6px;'>{_render_item(p)}</li>"
+        out += "<h3 style='font-size:14px;font-weight:700;color:#1D2D50;margin:20px 0 10px;'>Strategic Priorities</h3><ul style='margin:0;padding-left:20px;'>"
+        for p in prio[:5]: out += f"<li style='margin-bottom:6px;'>{_render_item(p)}</li>"
         out += "</ul>"
 
     if news:
@@ -442,13 +227,9 @@ def _company_overview_section(raw: dict) -> str:
                 headline = _e(n.get("headline", "") or n.get("title", ""))
                 url      = n.get("url", "") or n.get("source_url", "")
                 date     = _e(n.get("date", ""))
-                link     = (
-                    f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:600;'>{headline}</a>"
-                    if url else f"<b>{headline}</b>"
-                )
+                link     = f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:600;'>{headline}</a>" if url else f"<b>{headline}</b>"
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{link}"
-                if date:
-                    out += f" <span style='color:#94A3B8;font-size:11px;'>· {date}</span>"
+                if date: out += f" <span style='color:#94A3B8;font-size:11px;'>· {date}</span>"
                 out += "</div>"
             else:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
@@ -462,15 +243,11 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
     ep    = raw.get("exec_profiles", {})
     execs = ep.get("executives", [])
     for exec_data in execs:
-        if not isinstance(exec_data, dict):
-            continue
+        if not isinstance(exec_data, dict): continue
         name  = exec_data.get("name", "")
         title = exec_data.get("title", "")
         if name and name.strip():
-            stakeholders.append({
-                "name": name.strip(), "title": title or "",
-                "is_champion": False, "is_eb": False, "source": "exec_profiles",
-            })
+            stakeholders.append({"name": name.strip(), "title": title or "", "is_champion": False, "is_eb": False, "source": "exec_profiles"})
 
     sfdc      = ts_data.get("sfdc_stakeholder", {})
     sfdc_rows = sfdc.get("data_rows", [])
@@ -482,10 +259,7 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
         if exec_sponsor and exec_sponsor.strip():
             existing = {s["name"].lower() for s in stakeholders}
             if exec_sponsor.lower() not in existing:
-                stakeholders.append({
-                    "name": exec_sponsor.strip(), "title": "Executive Business Sponsor",
-                    "is_champion": False, "is_eb": False, "source": "sfdc",
-                })
+                stakeholders.append({"name": exec_sponsor.strip(), "title": "Executive Business Sponsor", "is_champion": False, "is_eb": False, "source": "sfdc"})
 
     medd      = ts_data.get("meddpicc_detail", {})
     medd_rows = medd.get("data_rows", [])
@@ -506,14 +280,11 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
             stakeholders.append({"name": eb_name.strip(), "title": "", "is_champion": False, "is_eb": True, "source": "gong"})
 
     for s in stakeholders:
-        if champion_name and champion_name.lower() in s["name"].lower():
-            s["is_champion"] = True
-        if eb_name and eb_name.lower() in s["name"].lower():
-            s["is_eb"] = True
+        if champion_name and champion_name.lower() in s["name"].lower(): s["is_champion"] = True
+        if eb_name and eb_name.lower() in s["name"].lower(): s["is_eb"] = True
 
     legs: dict = {"DATA": [], "BUSINESS": [], "IT": [], "ANALYST": [], "UNKNOWN": []}
-    for s in stakeholders:
-        legs[_classify_leg(s["title"])].append(s)
+    for s in stakeholders: legs[_classify_leg(s["title"])].append(s)
 
     out = "<div class='stool-grid'>"
     for row_pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")]:
@@ -523,48 +294,28 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
             contacts = legs[leg_key]
             is_empty = len(contacts) == 0
             out += f"<div class='stool-leg{'  empty' if is_empty else ''}'>"
-            out += (
-                f"<div class='stool-leg-header'>"
-                f"<div class='stool-leg-icon' style='background:{color}20;'>{icon}</div>"
-                f"<span class='stool-leg-name' style='color:{color};'>{_e(leg_key)}</span>"
-                f"</div>"
-            )
+            out += f"<div class='stool-leg-header'><div class='stool-leg-icon' style='background:{color}20;'>{icon}</div><span class='stool-leg-name' style='color:{color};'>{_e(leg_key)}</span></div>"
             if is_empty:
                 out += "<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified — add to target list</p>"
             else:
                 for contact in contacts:
                     out += "<div class='stool-person'>"
                     out += f"<div class='stool-person-name'>{_e(contact['name'])}"
-                    if contact["is_champion"]:
-                        out += " <span class='badge badge-champion'>🏆 Champion</span>"
-                    if contact["is_eb"]:
-                        out += " <span class='badge badge-eb'>💰 EB</span>"
+                    if contact["is_champion"]: out += " <span class='badge badge-champion'>🏆 Champion</span>"
+                    if contact["is_eb"]:       out += " <span class='badge badge-eb'>💰 EB</span>"
                     out += "</div>"
-                    if contact["title"]:
-                        out += f"<div class='stool-person-title'>{_e(contact['title'])}</div>"
+                    if contact["title"]: out += f"<div class='stool-person-title'>{_e(contact['title'])}</div>"
                     out += "</div>"
             out += "</div>"
     out += "</div>"
 
     if legs["UNKNOWN"]:
-        out += (
-            "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Unclassified: "
-            + ", ".join(_e(s["name"]) for s in legs["UNKNOWN"]) + "</p>"
-        )
+        out += "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Unclassified: " + ", ".join(_e(s["name"]) for s in legs["UNKNOWN"]) + "</p>"
     if not stakeholders:
-        out = (
-            "<div class='stool-grid'>"
-            + "".join(
-                f"<div class='stool-leg empty'>"
-                f"<div class='stool-leg-header'>"
-                f"<div class='stool-leg-icon' style='background:{LEG_COLORS[k]}20;'>{LEG_ICONS[k]}</div>"
-                f"<span class='stool-leg-name' style='color:{LEG_COLORS[k]};'>{k}</span></div>"
-                f"<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified</p></div>"
-                for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")] for k in pair
-            )
-            + "</div>"
-            + "<p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data. Run Exec Profile Builder.</p>"
-        )
+        out = ("<div class='stool-grid'>" +
+               "".join(f"<div class='stool-leg empty'><div class='stool-leg-header'><div class='stool-leg-icon' style='background:{LEG_COLORS[k]}20;'>{LEG_ICONS[k]}</div><span class='stool-leg-name' style='color:{LEG_COLORS[k]};'>{k}</span></div><p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified</p></div>"
+                       for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")] for k in pair) +
+               "</div><p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data. Run Exec Profile Builder.</p>")
     return out
 
 
@@ -617,11 +368,8 @@ def _stakeholder_map_section(ts_data: dict) -> str:
 
     crossref = ""
     if champion_name and exec_sponsor and champion_name.lower() != exec_sponsor.lower():
-        crossref = (
-            f"<div style='background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;"
-            f"border-radius:8px;padding:10px 14px;margin-top:12px;font-size:12px;color:#9a3412;'>"
-            f"⚠️ Gong Champion ({_e(champion_name)}) differs from SFDC Exec Sponsor ({_e(exec_sponsor)}) — verify.</div>"
-        )
+        crossref = (f"<div style='background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:12px;color:#9a3412;'>"
+                    f"⚠️ Gong Champion ({_e(champion_name)}) differs from SFDC Exec Sponsor ({_e(exec_sponsor)}) — verify.</div>")
 
     out  = "<table><thead><tr><th>Role</th><th>Name</th></tr></thead><tbody>"
     out += f"<tr><td>🏆 Champion</td><td>{champ_display}</td></tr>"
@@ -653,32 +401,21 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
     addressee = _e(exec_name) if exec_name else f"your team at {_e(account_name)}"
 
     tp_text = ""
-    if pain_signal:
-        tp_text += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
+    if pain_signal: tp_text += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
     if financial_hook:
-        tp_text += (
-            f"The way {addressee} is thinking about this space, "
-            f"there's a real opportunity to {_e(financial_hook.lower())}. "
-            f"That's exactly where ThoughtSpot tends to land — "
-            f"not as another BI tool, but as the layer that makes your "
-            f"data investment actually pay off. "
-            f"Worth a conversation to see if the timing is right?"
-        )
+        tp_text += (f"The way {addressee} is thinking about this space, there's a real opportunity to {_e(financial_hook.lower())}. "
+                    f"That's exactly where ThoughtSpot tends to land — not as another BI tool, but as the layer that makes your "
+                    f"data investment actually pay off. Worth a conversation to see if the timing is right?")
     else:
         tp_text += "<span style='color:#93C5FD;'>⚠️ No financial signal found — generic value used</span>"
 
-    return (
-        f"<div class='talking-point'>"
-        f"<div class='talking-point-label'>💡 Talking Point · {_e(label)}</div>"
-        f"<p>{tp_text}</p></div>"
-    )
+    return f"<div class='talking-point'><div class='talking-point-label'>💡 Talking Point · {_e(label)}</div><p>{tp_text}</p></div>"
 
 
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
-    if not roles:
-        return "<p style='color:#94A3B8;'>No role data available.</p>"
+    if not roles: return "<p style='color:#94A3B8;'>No role data available.</p>"
 
     total  = t.get("total_open_roles", "")
     trends = t.get("hiring_trends", [])
@@ -687,13 +424,9 @@ def _hiring_signals_section(raw: dict) -> str:
     if total or trends:
         meta = f"<b>{total} open roles</b>" if total else ""
         if trends:
-            trend_text = "; ".join(
-                (tr.get("trend", "") if isinstance(tr, dict) else str(tr))
-                for tr in trends[:2]
-            )
+            trend_text = "; ".join((tr.get("trend", "") if isinstance(tr, dict) else str(tr)) for tr in trends[:2])
             meta += (f" · {trend_text}" if meta else trend_text)
-        if meta:
-            out += _card(f"<p style='margin:0;font-size:13px;'>{meta}</p>")
+        if meta: out += _card(f"<p style='margin:0;font-size:13px;'>{meta}</p>")
 
     out += "<table><thead><tr><th>Role</th><th>Dept</th><th>Location</th><th>Posted</th></tr></thead><tbody>"
     for r in roles[:10]:
@@ -701,10 +434,7 @@ def _hiring_signals_section(raw: dict) -> str:
             title      = _e(r.get("title", ""))
             url        = r.get("url", "")
             title_link = f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};'>{title} ↗</a>" if url else title
-            out += (
-                f"<tr><td>{title_link}</td><td>{_e(r.get('department', ''))}</td>"
-                f"<td>{_e(r.get('location', ''))}</td><td>{_e(r.get('date_posted', ''))}</td></tr>"
-            )
+            out += f"<tr><td>{title_link}</td><td>{_e(r.get('department', ''))}</td><td>{_e(r.get('location', ''))}</td><td>{_e(r.get('date_posted', ''))}</td></tr>"
         else:
             out += f"<tr><td colspan='4'>{_e(str(r))}</td></tr>"
     out += "</tbody></table>"
@@ -723,8 +453,7 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
     out = ""
     if confirmed:
         for t in confirmed:
-            if not isinstance(t, dict):
-                continue
+            if not isinstance(t, dict): continue
             tool     = _e(t.get("tool", ""))
             evidence = _e(_text(t.get("evidence", "")))
             angle    = _e(t.get("displacement_angle", ""))
@@ -737,34 +466,26 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
             out += _signal_card(tool, "<br>".join(meta_parts))
 
     if suspected:
-        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3>"
-        out += "<ul style='margin:0;padding-left:16px;'>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3><ul style='margin:0;padding-left:16px;'>"
         for t in suspected[:5]:
             if isinstance(t, dict):
                 conf = t.get("confidence", "")
                 pill_color = "pill-red" if conf == "high" else "pill-orange" if conf == "medium" else "pill-blue"
-                out += (
-                    f"<li style='margin-bottom:6px;font-size:13px;'><b>{_e(t.get('tool', ''))}</b> "
-                    f"<span class='pill {pill_color}'>{conf}</span>"
-                    f"{'— ' + _e(_text(t.get('evidence', ''))) if t.get('evidence') else ''}</li>"
-                )
+                out += f"<li style='margin-bottom:6px;font-size:13px;'><b>{_e(t.get('tool', ''))}</b> <span class='pill {pill_color}'>{conf}</span>{'— ' + _e(_text(t.get('evidence', ''))) if t.get('evidence') else ''}</li>"
         out += "</ul>"
 
-    if disp_sum:
-        out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
+    if disp_sum: out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
 
 
 def _value_drivers_section(matched_drivers: list) -> str:
-    if not matched_drivers:
-        return "<p style='color:#94A3B8;'>No value driver data available.</p>"
+    if not matched_drivers: return "<p style='color:#94A3B8;'>No value driver data available.</p>"
 
     out = ""
     for m in matched_drivers:
         key    = m.get("key", "") if isinstance(m, dict) else m
         driver = get_drivers(key)
-        if not driver:
-            continue
+        if not driver: continue
         label     = driver.get("label", key)
         pain_pts  = driver.get("pain_points", [])
         money_in  = driver.get("money_in", [])
@@ -772,10 +493,8 @@ def _value_drivers_section(matched_drivers: list) -> str:
         evidence  = m.get("evidence", []) if isinstance(m, dict) else []
         bullets   = [f"💰 {b}" for b in money_in[:2]] + [f"🛡️ {b}" for b in money_out[:2]]
         meta = ""
-        if evidence:
-            meta += f"<span style='color:#64748b;font-size:11px;'>Matched: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
-        if pain_pts:
-            meta += f"<span style='color:#475569;font-size:12px;'>Pain: {_e(pain_pts[0])}</span>"
+        if evidence: meta += f"<span style='color:#64748b;font-size:11px;'>Matched: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
+        if pain_pts: meta += f"<span style='color:#475569;font-size:12px;'>Pain: {_e(pain_pts[0])}</span>"
         out += _signal_card(_e(label), meta, bullets)
     return out
 
@@ -797,28 +516,18 @@ def _deal_story_section(ts_data: dict) -> str:
     od_rows  = opp_detail.get("data_rows", [])
     od_cols  = opp_detail.get("column_names", [])
 
-    if not ds_rows:
-        return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
+    if not ds_rows: return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
 
-    ds_rec = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
-
-    # v5.4 fix: opp_name fallback chain — Opportunity Name not always in deal_stage columns
-    opp_name = (
-        ds_rec.get("Opportunity Name", "")
-        or ds_rec.get("SFDC Opp Name URL", "")
-        or ds_rec.get("Opportunity Name with url", "")
-        or ""
-    )
+    ds_rec   = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
+    opp_name = (ds_rec.get("Opportunity Name", "") or ds_rec.get("SFDC Opp Name URL", "") or ds_rec.get("Opportunity Name with url", "") or "")
     opp_name = _e(opp_name) if opp_name else "(opportunity)"
-
     stage    = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
     owner    = _e(ds_rec.get("Opportunity Owner Name", ""))
     pq       = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
     created  = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
     last_act = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
 
-    days_cold   = None
-    prior_close = ""
+    days_cold = prior_close = None
     if od_rows:
         od_rec      = dict(zip(od_cols, od_rows[0])) if isinstance(od_rows[0], list) else od_rows[0]
         days_cold   = od_rec.get("Total Days from Account last touch", od_rec.get("Days from Account last touch"))
@@ -827,12 +536,9 @@ def _deal_story_section(ts_data: dict) -> str:
         if not last_act: last_act = _decode_ts_date(od_rec.get("Month(Opportunity Last Activity Date)", ""))
         if not owner:    owner    = _e(od_rec.get("Opportunity Owner Name", ""))
 
-    deal_class = _classify_deal(
-        int(days_cold) if days_cold is not None else None,
-        act_rows, act_cols
-    )
+    deal_class = _classify_deal(int(days_cold) if days_cold is not None else None, act_rows, act_cols)
 
-    ft_rec        = {}
+    ft_rec = {}
     has_ft_values = False
     if ft_rows:
         ft_rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
@@ -844,8 +550,6 @@ def _deal_story_section(ts_data: dict) -> str:
                       "f Opportunity S3 Duration", "f Opportunity M0 to S7 Duration"]
         )
 
-    out = ""
-
     CLASS_BADGES = {
         "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
         "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
@@ -856,8 +560,7 @@ def _deal_story_section(ts_data: dict) -> str:
     }
     badge_html, dc_color = CLASS_BADGES.get(deal_class, ("", "#64748B"))
 
-    out += f"<div class='opp-card'>"
-    out += f"<b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
+    out  = f"<div class='opp-card'><b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
     if stage:      out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
     if pq:         out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
     if badge_html: out += badge_html
@@ -870,40 +573,32 @@ def _deal_story_section(ts_data: dict) -> str:
     if days_cold is not None:
         dc = int(days_cold)
         meta.append(f"<span style='color:{dc_color};font-weight:700;'>{dc}d since last account touch</span>")
-
     if meta:
-        out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>"
-        out += " &nbsp;·&nbsp; ".join(meta)
-        out += "</div>"
+        out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>" + " &nbsp;·&nbsp; ".join(meta) + "</div>"
     out += "</div>"
 
     if act_rows:
-        type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅",
-                      "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
+        type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅", "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
         date_idx  = next((act_cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in act_cols), -1)
         type_idx  = act_cols.index("Activity Type")      if "Activity Type"      in act_cols else -1
         subj_idx  = act_cols.index("Activity Subject")   if "Activity Subject"   in act_cols else -1
         owner_idx = act_cols.index("Activity Owner Name") if "Activity Owner Name" in act_cols else -1
 
-        out += f"""<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;
-                   letter-spacing:1px;margin:20px 0 10px;'>All Account Activity ({len(act_rows)} touches)</p>
-<table style='width:100%;border-collapse:collapse;font-size:12px;'>
-  <thead>
-    <tr style='background:#F8FAFF;'>
-      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>
-      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>
-      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Prospect Contact</th>
-      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>
-      <th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>
-    </tr>
-  </thead>
-  <tbody>"""
+        out += f"<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:20px 0 10px;'>All Account Activity ({len(act_rows)} touches)</p>"
+        out += f"<table style='width:100%;border-collapse:collapse;font-size:12px;'><thead><tr style='background:#F8FAFF;'>"
+        out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>"
+        out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>"
+        out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Prospect Contact</th>"
+        out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>"
+        out += f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>"
+        out += "</tr></thead><tbody>"
+
         for i, row in enumerate(act_rows[:30]):
             row = row if isinstance(row, list) else list(row.values())
-            date_val  = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
-            atype_raw = str(row[type_idx])               if type_idx  >= 0 and len(row) > type_idx  else ""
-            subj_raw  = str(row[subj_idx])               if subj_idx  >= 0 and len(row) > subj_idx  else ""
-            owner_val = str(row[owner_idx])              if owner_idx >= 0 and len(row) > owner_idx else ""
+            date_val   = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
+            atype_raw  = str(row[type_idx])               if type_idx  >= 0 and len(row) > type_idx  else ""
+            subj_raw   = str(row[subj_idx])               if subj_idx  >= 0 and len(row) > subj_idx  else ""
+            owner_val  = str(row[owner_idx])              if owner_idx >= 0 and len(row) > owner_idx else ""
             subj_clean = _re.sub(r'\[Outreach\]\s*|\[\w+\]\s*', "", subj_raw).strip()
             prospect   = "Unknown Contact"
             nm = _re.search(r'(?:Call|Email|to|for)\s+([A-Z][a-z]+ [A-Z][a-z]+)', subj_raw)
@@ -911,14 +606,14 @@ def _deal_story_section(ts_data: dict) -> str:
             icon = type_icons.get(atype_raw, "📌")
             bg   = "#FAFBFF" if i % 2 == 0 else "#FFFFFF"
             dim  = "opacity:0.55;" if owner_val in ("Salesforce Automation", "") else ""
-            out += (f"\n    <tr style='background:{bg};{dim}'>"
+            out += (f"<tr style='background:{bg};{dim}'>"
                     f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{_e(date_val)}</td>"
                     f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;white-space:nowrap;'>{icon} {_e(atype_raw)}</td>"
                     f"<td style='padding:7px 10px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(prospect)}</td>"
                     f"<td style='padding:7px 10px;color:#475569;border-bottom:1px solid #F1F5F9;'>{_e(subj_clean)}</td>"
                     f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;font-style:italic;'>{_e(owner_val)}</td>"
                     f"</tr>")
-        out += "\n  </tbody></table>"
+        out += "</tbody></table>"
 
     if has_ft_values:
         timing_map = [
@@ -929,8 +624,7 @@ def _deal_story_section(ts_data: dict) -> str:
             ("Opportunity Current Stage Duration", "Opportunity Current Stage Duration", "Current Stage"),
         ]
         out += f"<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 8px;'>Funnel Timing</h3>"
-        out += "<table style='border-collapse:collapse;font-size:12px;'>"
-        out += f"<thead><tr style='background:#F8FAFF;'><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Stage</th><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Days</th></tr></thead><tbody>"
+        out += f"<table style='border-collapse:collapse;font-size:12px;'><thead><tr style='background:#F8FAFF;'><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Stage</th><th style='padding:7px 12px;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Days</th></tr></thead><tbody>"
         for primary_key, fallback_key, label in timing_map:
             val = ft_rec.get(primary_key) or ft_rec.get(fallback_key)
             if val not in (0, None, "", "0"):
@@ -939,13 +633,9 @@ def _deal_story_section(ts_data: dict) -> str:
         out += "</tbody></table>"
 
     if deal_class in ("ghost", "cold", "stalled", "sdr_only"):
-        dc_str = f"{int(days_cold)}d" if days_cold is not None else "extended time"
-        sdr_li = ("<li>All prior touches were <strong>SDR-level or automated</strong> — "
-                  "no AE or SE has had a real conversation with this account</li>"
-                  if deal_class == "sdr_only" else "")
-        prior_li = (f"<li>Prior close date <strong>{prior_close}</strong> has passed — "
-                    "update or re-create opp after re-qualification</li>"
-                    if prior_close else "")
+        dc_str   = f"{int(days_cold)}d" if days_cold is not None else "extended time"
+        sdr_li   = "<li>All prior touches were <strong>SDR-level or automated</strong> — no AE or SE has had a real conversation with this account</li>" if deal_class == "sdr_only" else ""
+        prior_li = f"<li>Prior close date <strong>{prior_close}</strong> has passed — update or re-create opp after re-qualification</li>" if prior_close else ""
         owner_str = owner if owner else "the current opp owner"
         out += f"""
 <div style='margin-top:20px;background:#FFF7ED;border-left:4px solid #D97706;border-radius:8px;padding:16px 18px;'>
@@ -964,37 +654,29 @@ def _deal_story_section(ts_data: dict) -> str:
     <li>Re-qualify from scratch — do not assume prior context carries over</li>
   </ul>
 </div>"""
-
     return out
 
 
 def _activity_section(ts_data: dict) -> str:
     import re as _re
-
     act  = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
     rows = act.get("data_rows", [])
     cols = act.get("column_names", [])
-
-    if not rows:
-        return "<p style='color:#94A3B8;'>No activity history available.</p>"
+    if not rows: return "<p style='color:#94A3B8;'>No activity history available.</p>"
 
     date_idx  = next((cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in cols), -1)
     type_idx  = cols.index("Activity Type")      if "Activity Type"      in cols else -1
     subj_idx  = cols.index("Activity Subject")   if "Activity Subject"   in cols else -1
     owner_idx = cols.index("Activity Owner Name") if "Activity Owner Name" in cols else -1
+    type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅", "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
 
-    type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅",
-                  "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
-
-    out = (f"<table style='width:100%;border-collapse:collapse;font-size:12px;'>"
-           f"<thead><tr style='background:#F8FAFF;'>"
+    out = (f"<table style='width:100%;border-collapse:collapse;font-size:12px;'><thead><tr style='background:#F8FAFF;'>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;white-space:nowrap;'>Date</th>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Type</th>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Prospect Contact</th>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>Subject / Notes</th>"
            f"<th style='padding:8px 10px;text-align:left;color:{NAVY};font-weight:700;border-bottom:2px solid #E2E8F0;'>TS Owner</th>"
            f"</tr></thead><tbody>")
-
     for i, row in enumerate(rows[:30]):
         row = row if isinstance(row, list) else list(row.values())
         date_val   = _decode_ts_date(row[date_idx])  if date_idx  >= 0 and len(row) > date_idx  else ""
@@ -1026,16 +708,12 @@ def _sales_call_section(ts_data: dict) -> str:
     flag_cols = flags.get("column_names", [])
     det_rows  = detail.get("data_rows", [])
     det_cols  = detail.get("column_names", [])
-
-    if not flag_rows and not det_rows:
-        return "<p style='color:#94A3B8;'>No sales call data available.</p>"
+    if not flag_rows and not det_rows: return "<p style='color:#94A3B8;'>No sales call data available.</p>"
 
     flag_rec = {}
     det_rec  = {}
-    if flag_rows and flag_cols:
-        flag_rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
-    if det_rows and det_cols:
-        det_rec  = dict(zip(det_cols,  det_rows[0]))  if isinstance(det_rows[0], list)  else det_rows[0]
+    if flag_rows and flag_cols: flag_rec = dict(zip(flag_cols, flag_rows[0])) if isinstance(flag_rows[0], list) else flag_rows[0]
+    if det_rows and det_cols:   det_rec  = dict(zip(det_cols,  det_rows[0]))  if isinstance(det_rows[0], list)  else det_rows[0]
 
     gong_fields = [
         ("Opportunity Gong Champion Validated",        "Opportunity Gong Champion",         "Champion"),
@@ -1048,7 +726,6 @@ def _sales_call_section(ts_data: dict) -> str:
         ("Opportunity Gong Competition Validated",     "Opportunity Gong Competition",      "Competition"),
         ("Opportunity Gong Data Readiness Validated",  "Opportunity Gong Data Readiness",   "Data Readiness"),
     ]
-
     out  = "<table><thead><tr><th>Signal</th><th>Validated</th><th>Detail</th></tr></thead><tbody>"
     for flag_field, detail_field, label in gong_fields:
         validated   = flag_rec.get(flag_field, False)
@@ -1064,16 +741,9 @@ def _sales_call_section(ts_data: dict) -> str:
 
 
 def _gong_calls_section(raw: dict) -> str:
-    """
-    v5.4 fix: key names updated to match actual subagent output.
-    Handles both old schema (signals/total_rows) and new schema
-    (call_summaries/total_calls_found) with fallback lookups.
-    """
     calls = raw.get("sales_calls", {})
-    if not calls:
-        return "<p style='color:#94A3B8;'>No Gong call data available.</p>"
+    if not calls: return "<p style='color:#94A3B8;'>No Gong call data available.</p>"
 
-    # v5.4 fix: use .get(primary, .get(fallback)) for all key lookups
     signals    = calls.get("signals",         calls.get("call_summaries", []))
     total      = calls.get("total_rows",      calls.get("total_calls_found", 0))
     meaningful = calls.get("meaningful_count", calls.get("meaningful_calls", 0))
@@ -1093,8 +763,7 @@ def _gong_calls_section(raw: dict) -> str:
     if signals:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Call Signals</h3>"
         for s in signals[:10]:
-            if not isinstance(s, dict):
-                continue
+            if not isinstance(s, dict): continue
             sentiment  = s.get("sentiment", "")
             sent_color = "#16a34a" if sentiment == "POSITIVE" else "#ef4444" if sentiment == "NEGATIVE" else "#d97706"
             contact    = _e(s.get("contact_name", "") or s.get("contact_email", ""))
@@ -1103,8 +772,7 @@ def _gong_calls_section(raw: dict) -> str:
             next_s     = _e(s.get("next_steps", "") or s.get("highlights_next_steps", ""))
             action     = _e(s.get("recommended_action", ""))
             out += "<div class='signal-card'>"
-            out += f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'>"
-            out += f"<span style='color:{sent_color};font-weight:700;'>{sentiment}</span>"
+            out += f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'><span style='color:{sent_color};font-weight:700;'>{sentiment}</span>"
             if contact:   out += f"<b style='color:{NAVY};'>{contact}</b>"
             if call_name: out += f"<span style='color:#94A3B8;font-size:11px;'>· {call_name}</span>"
             out += "</div>"
@@ -1117,24 +785,17 @@ def _gong_calls_section(raw: dict) -> str:
         out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:20px 0 10px;'>Consolidated Next Steps</h3>"
         out += "<table><thead><tr><th>Priority</th><th>Contact</th><th>Action</th><th>Owner</th></tr></thead><tbody>"
         for ns in next_steps:
-            if not isinstance(ns, dict):
-                continue
+            if not isinstance(ns, dict): continue
             priority = ns.get("priority", "")
             p_color  = "#DC2626" if priority == "HIGH" else "#D97706" if priority == "MED" else "#94A3B8"
-            out += (
-                f"<tr>"
-                f"<td><span style='color:{p_color};font-weight:700;font-size:12px;'>{_e(priority)}</span></td>"
-                f"<td>{_e(ns.get('contact', ''))}</td>"
-                f"<td>{_e(ns.get('action', ''))}</td>"
-                f"<td>{_e(ns.get('owner', ''))}</td></tr>"
-            )
+            out += (f"<tr><td><span style='color:{p_color};font-weight:700;font-size:12px;'>{_e(priority)}</span></td>"
+                    f"<td>{_e(ns.get('contact', ''))}</td><td>{_e(ns.get('action', ''))}</td><td>{_e(ns.get('owner', ''))}</td></tr>")
         out += "</tbody></table>"
     return out
-    def _6sense_section(ts_data: dict) -> str:
+  def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
-    if not rows:
-        return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
+    if not rows: return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
 
     out = "<table><thead><tr><th>Account</th><th>Intent Grade</th><th>Reach Grade</th></tr></thead><tbody>"
     for row in rows[:10]:
@@ -1142,40 +803,31 @@ def _gong_calls_section(raw: dict) -> str:
         intent_grade = _score_to_grade(rec.get("Person 6S Intent Score", ""))
         reach_grade  = _score_to_grade(rec.get("Account Snapshot 6S Reach Score", ""))
         grade_color  = "#16A34A" if "A" in intent_grade else "#D97706" if intent_grade == "B" else "#94A3B8"
-        out += (
-            f"<tr><td>{_e(rec.get('Account Name', ''))}</td>"
-            f"<td><span style='color:{grade_color};font-weight:700;font-size:16px;'>{_e(intent_grade)}</span></td>"
-            f"<td><span style='font-weight:600;'>{_e(reach_grade)}</span></td></tr>"
-        )
+        out += (f"<tr><td>{_e(rec.get('Account Name', ''))}</td>"
+                f"<td><span style='color:{grade_color};font-weight:700;font-size:16px;'>{_e(intent_grade)}</span></td>"
+                f"<td><span style='font-weight:600;'>{_e(reach_grade)}</span></td></tr>")
     out += "</tbody></table>"
     return out
 
 
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
-    if not studies:
-        return "<p style='color:#94A3B8;'>No case studies matched.</p>"
+    if not studies: return "<p style='color:#94A3B8;'>No case studies matched.</p>"
 
     out = "<div style='display:flex;flex-direction:column;gap:12px;'>"
     for s in studies[:5]:
-        if not isinstance(s, dict):
-            continue
+        if not isinstance(s, dict): continue
         company = _e(s.get("company", ""))
         url     = s.get("url", "")
         why     = _e(s.get("why_chosen", ""))
         metric  = _e(s.get("key_metric", ""))
-        link    = (
-            f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:700;font-size:15px;'>{company} ↗</a>"
-            if url else f"<b style='font-size:15px;'>{company}</b>"
-        )
+        link    = (f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};font-weight:700;font-size:15px;'>{company} ↗</a>"
+                   if url else f"<b style='font-size:15px;'>{company}</b>")
         out += "<div class='card'>"
         out += f"<div style='margin-bottom:8px;'>{link}</div>"
-        if metric:
-            out += f"<div style='font-size:20px;font-weight:800;color:{BLUE};margin-bottom:8px;'>📊 {metric}</div>"
-        if why:
-            out += f"<p style='margin:0;font-size:12px;color:#475569;font-style:italic;'><b>Why for {_e(account_name)}:</b> {why}</p>"
-        if not url:
-            out += "<span class='flag' style='font-size:11px;'>⚠️ No URL available</span>"
+        if metric: out += f"<div style='font-size:20px;font-weight:800;color:{BLUE};margin-bottom:8px;'>📊 {metric}</div>"
+        if why:    out += f"<p style='margin:0;font-size:12px;color:#475569;font-style:italic;'><b>Why for {_e(account_name)}:</b> {why}</p>"
+        if not url: out += "<span class='flag' style='font-size:11px;'>⚠️ No URL available</span>"
         out += "</div>"
     out += "</div>"
     return out
@@ -1183,13 +835,11 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
 
 def _exec_profiles_section(raw: dict) -> str:
     execs = raw.get("exec_profiles", {}).get("executives", [])
-    if not execs:
-        return "<p style='color:#94A3B8;'>No executive profiles available.</p>"
+    if not execs: return "<p style='color:#94A3B8;'>No executive profiles available.</p>"
 
     out = ""
     for exec_data in execs[:5]:
-        if not isinstance(exec_data, dict):
-            continue
+        if not isinstance(exec_data, dict): continue
         name     = _e(exec_data.get("name", ""))
         title    = _e(exec_data.get("title", ""))
         li_url   = exec_data.get("linkedin_url", "")
@@ -1198,26 +848,20 @@ def _exec_profiles_section(raw: dict) -> str:
         activity = exec_data.get("recent_activity", [])
 
         out += "<div class='exec-card'>"
-        out += (
-            f"<div style='display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;'>"
-            f"<div><div style='font-weight:700;font-size:15px;color:{NAVY};'>{name}</div>"
-        )
-        if title:
-            out += f"<div style='font-size:12px;color:#64748b;margin-top:2px;'>{title}</div>"
+        out += (f"<div style='display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;'>"
+                f"<div><div style='font-weight:700;font-size:15px;color:{NAVY};'>{name}</div>")
+        if title: out += f"<div style='font-size:12px;color:#64748b;margin-top:2px;'>{title}</div>"
         out += "</div>"
-        if li_url:
-            out += f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};font-size:11px;font-weight:600;flex-shrink:0;'>LinkedIn ↗</a>"
+        if li_url: out += f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};font-size:11px;font-weight:600;flex-shrink:0;'>LinkedIn ↗</a>"
         out += "</div>"
 
         bio_text = _text(bio)
-        if bio_text:
-            out += f"<p style='font-size:13px;color:#334155;margin:0 0 10px;'>{_e(bio_text)}{_src_badge(bio)}</p>"
+        if bio_text: out += f"<p style='font-size:13px;color:#334155;margin:0 0 10px;'>{_e(bio_text)}{_src_badge(bio)}</p>"
 
         if activity:
             out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;'>Recent Activity</p>"
             out += "<ul style='margin:0;padding-left:16px;'>"
-            for act in activity[:3]:
-                out += f"<li style='font-size:12px;margin-bottom:4px;'>{_render_item(act)}</li>"
+            for act in activity[:3]: out += f"<li style='font-size:12px;margin-bottom:4px;'>{_render_item(act)}</li>"
             out += "</ul>"
 
         if quotes:
@@ -1227,41 +871,20 @@ def _exec_profiles_section(raw: dict) -> str:
                     quote_text = _e(q.get("quote", ""))
                     context    = _e(q.get("context", ""))
                     if quote_text:
-                        out += (
-                            f"<blockquote style='border-left:3px solid {BLUE};margin:0 0 8px;"
-                            f"padding:8px 14px;background:#f8faff;border-radius:0 8px 8px 0;"
-                            f"font-size:13px;color:#334155;'>{quote_text}{_src_badge(q)}"
-                        )
-                        if context:
-                            out += f"<div style='font-size:11px;color:#94A3B8;margin-top:4px;'>{context}</div>"
+                        out += (f"<blockquote style='border-left:3px solid {BLUE};margin:0 0 8px;"
+                                f"padding:8px 14px;background:#f8faff;border-radius:0 8px 8px 0;"
+                                f"font-size:13px;color:#334155;'>{quote_text}{_src_badge(q)}")
+                        if context: out += f"<div style='font-size:11px;color:#94A3B8;margin-top:4px;'>{context}</div>"
                         out += "</blockquote>"
         out += "</div>"
     return out
 
 
 def _normalize_outreach(outreach_data: dict) -> dict:
-    """
-    v5.4: Normalize outreach data to standard schema regardless of subagent output shape.
+    if not outreach_data: return {}
 
-    Standard schema:
-      {"sequences": [{"contact_name", "contact_title",
-                       "emails": [{"subject", "body", "claim_annotations": [...]}],
-                       "linkedin_messages": [{"body", "claim_annotations": [...]}]}]}
-
-    Handles:
-      - contacts[].sequences.email_1 shape
-      - flat dict with email_1/linkedin keys
-      - linkedin key (single object) → linkedin_messages (list)
-      - sequence-level claim_annotations distributed to individual emails
-    """
-    if not outreach_data:
-        return {}
-
-    # Already correct shape — sequences is a list
     if "sequences" in outreach_data and isinstance(outreach_data["sequences"], list):
-        # Still normalize linkedin key and distribute annotations within each sequence
         for seq in outreach_data["sequences"]:
-            # Fix: linkedin single object → linkedin_messages list
             if "linkedin" in seq and "linkedin_messages" not in seq:
                 linkedin = seq.pop("linkedin")
                 if isinstance(linkedin, dict):
@@ -1271,19 +894,14 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                     seq["linkedin_messages"] = linkedin
                 else:
                     seq["linkedin_messages"] = [{"body": str(linkedin), "claim_annotations": []}]
+            if "linkedin_messages" not in seq: seq["linkedin_messages"] = []
 
-            # Ensure linkedin_messages exists
-            if "linkedin_messages" not in seq:
-                seq["linkedin_messages"] = []
-
-            # Fix: distribute sequence-level claim_annotations to emails
             seq_annotations = seq.get("claim_annotations", [])
             if seq_annotations:
                 emails = seq.get("emails", [])
                 if emails and isinstance(emails[0], dict):
                     if len(emails) == 1:
-                        if not emails[0].get("claim_annotations"):
-                            emails[0]["claim_annotations"] = seq_annotations
+                        if not emails[0].get("claim_annotations"): emails[0]["claim_annotations"] = seq_annotations
                     else:
                         chunk = max(1, len(seq_annotations) // len(emails))
                         for i, email in enumerate(emails):
@@ -1292,19 +910,12 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                                 end   = start + chunk if i < len(emails) - 1 else len(seq_annotations)
                                 email["claim_annotations"] = seq_annotations[start:end]
 
-            # Ensure all emails have claim_annotations key
             for email in seq.get("emails", []):
-                if isinstance(email, dict) and "claim_annotations" not in email:
-                    email["claim_annotations"] = []
-
-            # Ensure all linkedin_messages have claim_annotations key
+                if isinstance(email, dict) and "claim_annotations" not in email: email["claim_annotations"] = []
             for msg in seq.get("linkedin_messages", []):
-                if isinstance(msg, dict) and "claim_annotations" not in msg:
-                    msg["claim_annotations"] = []
-
+                if isinstance(msg, dict) and "claim_annotations" not in msg: msg["claim_annotations"] = []
         return outreach_data
 
-    # Handle contacts[].sequences shape
     if "contacts" in outreach_data:
         seq_data    = outreach_data.get("sequences", {})
         annotations = outreach_data.get("claim_annotations", [])
@@ -1316,96 +927,67 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                 for key in sorted(seq_data.keys()):
                     item = seq_data[key]
                     if key.startswith("email"):
-                        if isinstance(item, str):
-                            emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
+                        if isinstance(item, str): emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
                         elif isinstance(item, dict):
-                            if "claim_annotations" not in item:
-                                item["claim_annotations"] = []
+                            if "claim_annotations" not in item: item["claim_annotations"] = []
                             emails.append(item)
                     elif key in ("linkedin", "linkedin_messages") or key.startswith("linkedin"):
-                        if isinstance(item, str):
-                            li_msgs.append({"body": item, "claim_annotations": []})
+                        if isinstance(item, str): li_msgs.append({"body": item, "claim_annotations": []})
                         elif isinstance(item, dict):
                             body = item.get("message", item.get("body", str(item)))
                             li_msgs.append({"body": body, "claim_annotations": []})
                         elif isinstance(item, list):
                             for m in item:
-                                if isinstance(m, dict) and "claim_annotations" not in m:
-                                    m["claim_annotations"] = []
+                                if isinstance(m, dict) and "claim_annotations" not in m: m["claim_annotations"] = []
                             li_msgs.extend(item)
-
-            # Distribute sequence-level annotations to first email
-            if annotations and emails and not emails[0].get("claim_annotations"):
-                emails[0]["claim_annotations"] = annotations
-
-            sequences.append({
-                "contact_name":      contact.get("name", ""),
-                "contact_title":     contact.get("title", ""),
-                "contact_linkedin":  contact.get("linkedin_url", ""),
-                "emails":            emails,
-                "linkedin_messages": li_msgs,
-            })
+            if annotations and emails and not emails[0].get("claim_annotations"): emails[0]["claim_annotations"] = annotations
+            sequences.append({"contact_name": contact.get("name", ""), "contact_title": contact.get("title", ""),
+                               "contact_linkedin": contact.get("linkedin_url", ""), "emails": emails, "linkedin_messages": li_msgs})
         return {"sequences": sequences}
 
-    # Handle flat dict with email_1, linkedin keys at top level
     emails      = []
     li_msgs     = []
     annotations = outreach_data.get("claim_annotations", [])
-
     for key in sorted(outreach_data.keys()):
-        if key == "claim_annotations":
-            continue
+        if key == "claim_annotations": continue
         item = outreach_data[key]
         if key.startswith("email"):
-            if isinstance(item, str):
-                emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
+            if isinstance(item, str): emails.append({"subject": f"Email {len(emails)+1}", "body": item, "claim_annotations": []})
             elif isinstance(item, dict):
-                if "claim_annotations" not in item:
-                    item["claim_annotations"] = []
+                if "claim_annotations" not in item: item["claim_annotations"] = []
                 emails.append(item)
         elif key in ("linkedin", "linkedin_messages") or key.startswith("linkedin"):
-            if isinstance(item, str):
-                li_msgs.append({"body": item, "claim_annotations": []})
+            if isinstance(item, str): li_msgs.append({"body": item, "claim_annotations": []})
             elif isinstance(item, dict):
                 body = item.get("message", item.get("body", str(item)))
                 li_msgs.append({"body": body, "claim_annotations": []})
             elif isinstance(item, list):
                 for m in item:
-                    if isinstance(m, dict) and "claim_annotations" not in m:
-                        m["claim_annotations"] = []
+                    if isinstance(m, dict) and "claim_annotations" not in m: m["claim_annotations"] = []
                 li_msgs.extend(item)
-
-    # Distribute annotations to first email
-    if annotations and emails and not emails[0].get("claim_annotations"):
-        emails[0]["claim_annotations"] = annotations
-
+    if annotations and emails and not emails[0].get("claim_annotations"): emails[0]["claim_annotations"] = annotations
     if emails or li_msgs:
-        return {"sequences": [{"contact_name": "", "contact_title": "",
-                               "emails": emails, "linkedin_messages": li_msgs}]}
-
+        return {"sequences": [{"contact_name": "", "contact_title": "", "emails": emails, "linkedin_messages": li_msgs}]}
     return outreach_data
 
 
 def _render_claim_annotations(annotations: list) -> str:
-    if not annotations:
-        return ""
+    if not annotations: return ""
 
     flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
     unverified_count = len(flags)
 
-    out  = f"<details style='margin-top:8px;'>"
+    out  = "<details style='margin-top:8px;'>"
     out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
             f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
-            f"display:flex;align-items:center;gap:8px;'>"
-            f"🔍 Claim annotations ({len(annotations)})")
+            f"display:flex;align-items:center;gap:8px;'>🔍 Claim annotations ({len(annotations)})")
     if unverified_count:
         out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
     out += "</summary>"
-    out += f"<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
+    out += "<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
 
     for ann in annotations:
-        if not isinstance(ann, dict):
-            continue
+        if not isinstance(ann, dict): continue
         claim      = _e(ann.get("claim", ""))
         basis      = _e(ann.get("basis", ""))
         source     = ann.get("source", "")
@@ -1415,33 +997,17 @@ def _render_claim_annotations(annotations: list) -> str:
 
         bg_color     = "#FFF7ED" if flag else "#F8FAFF"
         border_color = "#FED7AA" if flag else "#E2E8F8"
-        conf_color   = (
-            "#16A34A" if confidence == "confirmed"
-            else "#D97706" if confidence == "inferred"
-            else "#94A3B8"
-        )
+        conf_color   = "#16A34A" if confidence == "confirmed" else "#D97706" if confidence == "inferred" else "#94A3B8"
 
-        out += (f"<div style='padding:10px 14px;background:{bg_color};"
-                f"border-bottom:1px solid {border_color};font-size:12px;'>")
-        out += f"<div style='margin-bottom:4px;'>"
-        out += f"<span style='font-weight:600;color:{NAVY};'>Claim:</span> "
-        out += f"<span style='font-style:italic;color:#334155;'>{claim}</span>"
-        out += "</div>"
-
-        if basis:
-            out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
-
-        out += f"<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
+        out += f"<div style='padding:10px 14px;background:{bg_color};border-bottom:1px solid {border_color};font-size:12px;'>"
+        out += f"<div style='margin-bottom:4px;'><span style='font-weight:600;color:{NAVY};'>Claim:</span> <span style='font-style:italic;color:#334155;'>{claim}</span></div>"
+        if basis: out += f"<div style='margin-bottom:4px;color:#475569;'><span style='font-weight:600;'>Basis:</span> {basis}</div>"
+        out += "<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap;'>"
         if source:
-            if source.startswith("http"):
-                out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
-            else:
-                out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
-        out += (f"<span style='color:{conf_color};font-size:10px;font-weight:700;"
-                f"text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>")
-        if flag:
-            out += (f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;"
-                    f"border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>")
+            if source.startswith("http"): out += f"<a href='{_e(source)}' target='_blank' style='color:{BLUE};font-size:11px;'>↗ {src_type or 'source'}</a>"
+            else: out += f"<span style='color:#64748b;font-size:11px;'>📄 {_e(source)}</span>"
+        out += f"<span style='color:{conf_color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;'>{_e(confidence)}</span>"
+        if flag: out += f"<span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;'>⚠️ {_e(flag)}</span>"
         out += "</div></div>"
 
     out += "</div></details>"
@@ -1449,20 +1015,15 @@ def _render_claim_annotations(annotations: list) -> str:
 
 
 def _outreach_section(outreach_data: dict) -> str:
-    # v5.4: normalize before rendering — handles all subagent output shapes
     outreach_data = _normalize_outreach(outreach_data)
-
-    if not outreach_data:
-        return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
+    if not outreach_data: return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
 
     sequences = outreach_data.get("sequences", [])
-    if not sequences:
-        return "<p style='color:#94A3B8;'>No outreach sequences available.</p>"
+    if not sequences: return "<p style='color:#94A3B8;'>No outreach sequences available.</p>"
 
     out = ""
     for seq in sequences:
-        if not isinstance(seq, dict):
-            continue
+        if not isinstance(seq, dict): continue
         name    = _e(seq.get("contact_name", "") or seq.get("name", ""))
         title   = _e(seq.get("contact_title", "") or seq.get("title", ""))
         emails  = seq.get("emails", [])
@@ -1470,8 +1031,7 @@ def _outreach_section(outreach_data: dict) -> str:
 
         out += "<div class='exec-card'>"
         out += f"<div style='font-weight:700;font-size:15px;color:{NAVY};margin-bottom:4px;'>✉️ {name}"
-        if title:
-            out += f" <span style='font-weight:400;font-size:13px;color:#64748b;'>— {title}</span>"
+        if title: out += f" <span style='font-weight:400;font-size:13px;color:#64748b;'>— {title}</span>"
         out += "</div>"
 
         if emails:
@@ -1484,8 +1044,7 @@ def _outreach_section(outreach_data: dict) -> str:
                     out += f"<div style='margin-bottom:20px;'>"
                     out += f"<b style='font-size:13px;color:{NAVY};'>Email {i}: {subj}</b>"
                     out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
-                    if annotations:
-                        out += _render_claim_annotations(annotations)
+                    if annotations: out += _render_claim_annotations(annotations)
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(email))}</pre>"
@@ -1499,8 +1058,7 @@ def _outreach_section(outreach_data: dict) -> str:
                     out += f"<div style='margin-bottom:16px;'>"
                     out += f"<b style='font-size:13px;color:{NAVY};'>LinkedIn {i}</b>"
                     out += f"<pre style='background:#f8faff;border:1px solid #e2e8f8;border-radius:8px;padding:14px;font-size:12px;margin-top:6px;white-space:pre-wrap;font-family:inherit;'>{body}</pre>"
-                    if annotations:
-                        out += _render_claim_annotations(annotations)
+                    if annotations: out += _render_claim_annotations(annotations)
                     out += "</div>"
                 else:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
@@ -1523,8 +1081,7 @@ def _get_tabs(phase: int) -> list:
         ("case_studies",  "📚 Case Studies"),
         ("exec_profiles", "🧑 Exec Profiles"),
     ]
-    if phase == 2:
-        tabs.append(("outreach", "✉️ Outreach"))
+    if phase == 2: tabs.append(("outreach", "✉️ Outreach"))
     return tabs
 
 
@@ -1534,15 +1091,9 @@ def _build_html_page(title: str, body: str) -> str:
         "<meta charset='UTF-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_e(title)}</title>"
-        + _CSS
-        + "</head><body>"
-        + body
-        + _JS
-        + "</body></html>"
+        + _CSS + "</head><body>" + body + _JS + "</body></html>"
     )
-
-
-def build_pg_report(
+  def build_pg_report(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1579,21 +1130,16 @@ def build_pg_report(
     body += "<div class='tab-nav'>"
     for i, (tab_id, tab_label) in enumerate(tabs):
         active = "active" if i == 0 else ""
-        body += (
-            f"<button class='tab-btn tab-btn-{_e(slug)} {active}' "
-            f"data-tab='{_e(tab_id)}' "
-            f"onclick='showTab(\"{_e(slug)}\",\"{_e(tab_id)}\")'>"
-            f"{_e(tab_label)}</button>"
-        )
+        body += (f"<button class='tab-btn tab-btn-{_e(slug)} {active}' "
+                 f"data-tab='{_e(tab_id)}' "
+                 f"onclick='showTab(\"{_e(slug)}\",\"{_e(tab_id)}\")'>"
+                 f"{_e(tab_label)}</button>")
     body += "</div>"
 
     body += "<div class='content'>"
     for i, (tab_id, _) in enumerate(tabs):
         active = "active" if i == 0 else ""
-        body += (
-            f"<div id='{_e(slug)}_{_e(tab_id)}' "
-            f"class='tab-content tab-content-{_e(slug)} {active}'>"
-        )
+        body += f"<div id='{_e(slug)}_{_e(tab_id)}' class='tab-content tab-content-{_e(slug)} {active}'>"
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
@@ -1656,7 +1202,7 @@ def build_pg_report(
 
     print(f"[pg_report_builder v5.4] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-    def build_onepager(
+  def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1684,8 +1230,7 @@ def build_pg_report(
             mi      = signals.get("money_in", [])
             mo      = signals.get("money_out", [])
             hook    = mi[0] if mi else (mo[0] if mo else "")
-            if hook:
-                value_statements.append(hook)
+            if hook: value_statements.append(hook)
 
     proof_points = []
     for s in studies[:3]:
@@ -1699,104 +1244,35 @@ def build_pg_report(
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *, *::before, *::after {{ box-sizing: border-box; }}
-body {{
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    margin: 0; padding: 0; background: #f0f4ff;
-    color: #0f172a; font-size: 14px; line-height: 1.6;
-}}
-.page {{
-    max-width: 800px; margin: 40px auto; background: white;
-    border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden;
-}}
-.hero {{
-    background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%);
-    padding: 52px 56px 44px; color: white; position: relative; overflow: hidden;
-}}
-.hero::before {{
-    content: ''; position: absolute; top: -80px; right: -80px;
-    width: 360px; height: 360px;
-    background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%);
-    pointer-events: none;
-}}
-.hero-eyebrow {{
-    font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
-    text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px;
-    position: relative; z-index: 1;
-}}
-.hero h1 {{
-    font-size: 36px; font-weight: 800; margin: 0 0 10px; line-height: 1.1;
-    letter-spacing: -0.5px; position: relative; z-index: 1;
-}}
-.hero-sub {{
-    font-size: 15px; opacity: 0.7; margin: 0; position: relative; z-index: 1;
-}}
+body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; background: #f0f4ff; color: #0f172a; font-size: 14px; line-height: 1.6; }}
+.page {{ max-width: 800px; margin: 40px auto; background: white; border-radius: 20px; box-shadow: 0 8px 48px rgba(29,45,80,0.12); overflow: hidden; }}
+.hero {{ background: linear-gradient(135deg, #060d1f 0%, {NAVY} 45%, #2347c8 100%); padding: 52px 56px 44px; color: white; position: relative; overflow: hidden; }}
+.hero::before {{ content: ''; position: absolute; top: -80px; right: -80px; width: 360px; height: 360px; background: radial-gradient(circle, rgba(46,92,229,0.25) 0%, transparent 70%); pointer-events: none; }}
+.hero-eyebrow {{ font-size: 10px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px; position: relative; z-index: 1; }}
+.hero h1 {{ font-size: 36px; font-weight: 800; margin: 0 0 10px; line-height: 1.1; letter-spacing: -0.5px; position: relative; z-index: 1; }}
+.hero-sub {{ font-size: 15px; opacity: 0.7; margin: 0; position: relative; z-index: 1; }}
 .content {{ padding: 48px 56px; }}
-h2 {{
-    font-size: 18px; font-weight: 700; color: {NAVY};
-    margin: 36px 0 16px; padding-bottom: 10px;
-    border-bottom: 2px solid {LIGHT_BLUE}; letter-spacing: -0.2px;
-}}
+h2 {{ font-size: 18px; font-weight: 700; color: {NAVY}; margin: 36px 0 16px; padding-bottom: 10px; border-bottom: 2px solid {LIGHT_BLUE}; letter-spacing: -0.2px; }}
 h2:first-of-type {{ margin-top: 0; }}
 ul {{ padding-left: 0; margin: 0; list-style: none; }}
-li {{
-    display: flex; align-items: flex-start; gap: 10px;
-    margin-bottom: 10px; font-size: 14px; line-height: 1.6; color: #334155;
-}}
+li {{ display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; font-size: 14px; line-height: 1.6; color: #334155; }}
 li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; margin-top: 1px; }}
-.value-card {{
-    background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff);
-    border: 1px solid #c7d7f8; border-left: 4px solid {BLUE};
-    border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
-    font-size: 13px; line-height: 1.65; color: #1e3a5f;
-}}
-.proof-card {{
-    background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
-    border: 1px solid #86efac; border-left: 4px solid #16a34a;
-    border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
-    font-size: 14px; font-weight: 600; color: #14532d;
-    display: flex; align-items: center; gap: 10px;
-}}
-.cta {{
-    background: linear-gradient(135deg, {NAVY}, {BLUE});
-    color: white; border-radius: 14px; padding: 32px 40px;
-    text-align: center; margin-top: 40px;
-    position: relative; overflow: hidden;
-}}
-.cta::before {{
-    content: ''; position: absolute; top: -40px; right: -40px;
-    width: 200px; height: 200px;
-    background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
-    pointer-events: none;
-}}
-.cta-label {{
-    font-size: 10px; font-weight: 700; letter-spacing: 2px;
-    text-transform: uppercase; opacity: 0.6; margin-bottom: 12px;
-}}
-.cta a {{
-    display: inline-block; color: white; font-size: 20px;
-    font-weight: 800; text-decoration: none; letter-spacing: -0.3px;
-    position: relative; z-index: 1;
-}}
+.value-card {{ background: linear-gradient(135deg, {LIGHT_BLUE}, #f0f7ff); border: 1px solid #c7d7f8; border-left: 4px solid {BLUE}; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; font-size: 13px; line-height: 1.65; color: #1e3a5f; }}
+.proof-card {{ background: linear-gradient(135deg, #f0fdf4, #ecfdf5); border: 1px solid #86efac; border-left: 4px solid #16a34a; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; font-size: 14px; font-weight: 600; color: #14532d; display: flex; align-items: center; gap: 10px; }}
+.cta {{ background: linear-gradient(135deg, {NAVY}, {BLUE}); color: white; border-radius: 14px; padding: 32px 40px; text-align: center; margin-top: 40px; position: relative; overflow: hidden; }}
+.cta::before {{ content: ''; position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%); pointer-events: none; }}
+.cta-label {{ font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; opacity: 0.6; margin-bottom: 12px; }}
+.cta a {{ display: inline-block; color: white; font-size: 20px; font-weight: 800; text-decoration: none; letter-spacing: -0.3px; position: relative; z-index: 1; }}
 .cta p {{ color: rgba(255,255,255,0.7); font-size: 13px; margin: 10px 0 0; position: relative; z-index: 1; }}
-.footer {{
-    padding: 20px 56px; background: #f8faff;
-    border-top: 1px solid #e2e8f8;
-    display: flex; align-items: center; justify-content: space-between;
-}}
+.footer {{ padding: 20px 56px; background: #f8faff; border-top: 1px solid #e2e8f8; display: flex; align-items: center; justify-content: space-between; }}
 .footer-logo {{ font-size: 13px; font-weight: 700; color: {NAVY}; letter-spacing: -0.3px; }}
 .footer-tagline {{ font-size: 11px; color: #94A3B8; }}
 @media print {{
     body {{ background: white; font-size: 12px; }}
     .page {{ max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; }}
-    .hero {{
-        padding: 36px 44px 30px;
-        -webkit-print-color-adjust: exact; print-color-adjust: exact;
-    }}
+    .hero {{ padding: 36px 44px 30px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     .content {{ padding: 36px 44px; }}
-    .cta {{
-        -webkit-print-color-adjust: exact; print-color-adjust: exact;
-        break-inside: avoid;
-    }}
+    .cta {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; break-inside: avoid; }}
     .value-card, .proof-card {{ break-inside: avoid; }}
     .footer {{ padding: 16px 44px; }}
 }}
@@ -1807,53 +1283,40 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
     body += "<div class='hero'>"
     body += "<div class='hero-eyebrow'>ThoughtSpot · Account Brief</div>"
     body += f"<h1>{_e(account_name)}</h1>"
-    if desc:
-        body += f"<p class='hero-sub'>{_e(desc[:180])}</p>"
+    if desc: body += f"<p class='hero-sub'>{_e(desc[:180])}</p>"
     body += "</div>"
 
     body += "<div class='content'>"
 
     if challenges:
         body += "<h2>Business Challenges</h2><ul>"
-        for c in challenges:
-            body += f"<li>{_e(c)}</li>"
+        for c in challenges: body += f"<li>{_e(c)}</li>"
         body += "</ul>"
 
     if value_statements:
         body += "<h2>How ThoughtSpot Helps</h2>"
-        for v in value_statements:
-            body += f"<div class='value-card'>{_e(v)}</div>"
+        for v in value_statements: body += f"<div class='value-card'>{_e(v)}</div>"
     else:
-        body += (
-            "<h2>How ThoughtSpot Helps</h2>"
-            "<div class='value-card'>"
-            "ThoughtSpot delivers AI-powered analytics that help business "
-            "teams get answers from data instantly — no SQL, no waiting."
-            "</div>"
-        )
+        body += ("<h2>How ThoughtSpot Helps</h2>"
+                 "<div class='value-card'>ThoughtSpot delivers AI-powered analytics that help business "
+                 "teams get answers from data instantly — no SQL, no waiting.</div>")
 
     if proof_points:
         body += "<h2>Customer Proof Points</h2>"
-        for p in proof_points:
-            body += f"<div class='proof-card'>📊 {p}</div>"
+        for p in proof_points: body += f"<div class='proof-card'>📊 {p}</div>"
 
-    body += (
-        "<div class='cta'>"
-        "<div class='cta-label'>Ready to see it in action?</div>"
-        "<a href='https://www.thoughtspot.com/demo' target='_blank'>"
-        "Request a Demo →</a>"
-        "<p>thoughtspot.com/demo</p>"
-        "</div>"
-    )
+    body += ("<div class='cta'>"
+             "<div class='cta-label'>Ready to see it in action?</div>"
+             "<a href='https://www.thoughtspot.com/demo' target='_blank'>Request a Demo →</a>"
+             "<p>thoughtspot.com/demo</p>"
+             "</div>")
 
     body += "</div>"
 
-    body += (
-        "<div class='footer'>"
-        f"<span class='footer-logo'>ThoughtSpot</span>"
-        f"<span class='footer-tagline'>AI-Powered Analytics</span>"
-        "</div>"
-    )
+    body += (f"<div class='footer'>"
+             f"<span class='footer-logo'>ThoughtSpot</span>"
+             f"<span class='footer-tagline'>AI-Powered Analytics</span>"
+             f"</div>")
 
     body += "</div>"
 
