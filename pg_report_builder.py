@@ -792,7 +792,8 @@ def _gong_calls_section(raw: dict) -> str:
                     f"<td>{_e(ns.get('contact', ''))}</td><td>{_e(ns.get('action', ''))}</td><td>{_e(ns.get('owner', ''))}</td></tr>")
         out += "</tbody></table>"
     return out
-  def _6sense_section(ts_data: dict) -> str:
+
+def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
     if not rows: return "<p style='color:#94A3B8;'>No 6Sense intent data available.</p>"
