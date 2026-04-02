@@ -60,12 +60,12 @@ def _now_str() -> str:
 
 
 def _run_single_thread(
-    intent:     str,
-    variables:  dict,
-    key:        str,
-    timeout:    int,
-    results:    dict,
-    errors:     dict,
+    intent:    str,
+    variables: dict,
+    key:       str,
+    timeout:   int,
+    results:   dict,
+    errors:    dict,
 ):
     """
     Execute one run_with_fallback() call and write result into shared dict.
@@ -137,7 +137,7 @@ def run_ts_batch(
         return {}
 
     # Build de-duplicated keys
-    key_counts: dict = {}
+    key_counts: dict  = {}
     keyed_tasks: list = []
 
     for intent, variables in intents_and_vars:
@@ -163,8 +163,8 @@ def run_ts_batch(
 
     # Process in batches of max_workers
     for batch_start_idx in range(0, n, workers):
-        batch       = keyed_tasks[batch_start_idx:batch_start_idx + workers]
-        threads     = []
+        batch   = keyed_tasks[batch_start_idx:batch_start_idx + workers]
+        threads = []
 
         for key, intent, variables in batch:
             t = threading.Thread(
@@ -329,6 +329,61 @@ def run_ts_batch_for_accounts(
 
 
 # ---------------------------------------------------------------------------
+# Owner extraction helper
+# Eliminates pre-flight SFDC lookup just to get the owner name
+# ---------------------------------------------------------------------------
+
+def extract_owner_from_ts_results(ts_results: dict) -> str:
+    """
+    Extract the AE/account owner name from sfdc_stakeholder batch results.
+    Used to avoid a separate SFDC lookup just to get the owner name.
+
+    Returns the owner name string, or "" if not found.
+    """
+    sfdc = ts_results.get("sfdc_stakeholder", {})
+    if not sfdc or sfdc.get("status") != "ok":
+        return ""
+    cols = sfdc.get("column_names", [])
+    rows = sfdc.get("data_rows", [])
+    if not rows:
+        return ""
+    rec = dict(zip(cols, rows[0])) if isinstance(rows[0], list) else rows[0]
+    return (
+        rec.get("Account Owner Name")
+        or rec.get("Opportunity Owner Name")
+        or rec.get("account_owner_name")
+        or ""
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6Sense follow-on helper
+# Fire after main batch once owner_name is known from sfdc_stakeholder
+# ---------------------------------------------------------------------------
+
+def run_6sense_followon(owner_name: str, timeout: int = 15) -> dict:
+    """
+    Fire 6sense_intent as a single follow-on call after the main batch,
+    once owner_name is known from sfdc_stakeholder results.
+
+    Returns the 6sense result dict or empty dict on failure.
+    """
+    if not owner_name:
+        return {
+            "status":       "skipped",
+            "data_rows":    [],
+            "column_names": [],
+            "reason":       "owner_name empty — cannot query 6sense by owner",
+        }
+    result = run_with_fallback("6sense_intent", owner_name=owner_name, timeout=timeout)
+    print(
+        f"[ts_parallel] 6sense follow-on for '{owner_name}': "
+        f"{result.get('status')} — {len(result.get('data_rows', []))} rows"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
 
@@ -362,7 +417,6 @@ if __name__ == "__main__":
     test_errors  = {}
 
     def _fake_query(intent, variables, key, timeout, results, errors):
-        import time
         time.sleep(0.1)
         results[key] = {"status": "ok", "column_names": ["test"], "data_rows": [["val"]]}
 
