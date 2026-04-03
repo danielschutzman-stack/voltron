@@ -29,7 +29,78 @@ LEG_RULES = [
     ("IT", ["cio", "cto", "chief information", "chief technology", "vp technology", "vp of technology", "vp engineering", "director of technology", "director of it", "infrastructure", "platform", "architecture", "security", "cloud", "devops", "systems", "software engineering", "it "]),
     ("BUSINESS", ["ceo", "coo", "cfo", "cmo", "president", " gm ", "general manager", "svp", "evp", "managing director", "head of ", "operations", "finance", "marketing", "sales", "revenue", "strategy", "product"]),
 ]
+("BUSINESS", ["ceo", "coo", ...]),
+]
 
+
+BUILDER_SCHEMA = {
+    "web_research": {
+        "pain_points":             [{"text": "", "source": "", "url": ""}],
+        "thoughtspot_fit_signals": [{"signal": "", "signal_tier": "HIGH|MEDIUM|LOW", "source": ""}],
+        "recent_news":             [{"headline": "", "date": "", "url": ""}],
+        "strategic_priorities":    [{"text": "", "source": ""}],
+        "competitor_tools_in_use": [{"tool": "", "source": "", "url": ""}],
+        "tech_stack":              [{"tool": "", "source": "", "url": ""}],
+    },
+    "tsumble": {
+        "role_highlights": [{"title": "", "department": "", "location": "",
+                              "date_posted": "",
+                              "url": "",
+                              "thoughtspot_signal": "HIGH|MEDIUM|LOW|NONE"}],
+        "hiring_trends":   [{"trend": "", "source": ""}],
+    },
+    "competitor_intel": {
+        "tools_confirmed": [{"tool": "", "displacement_angle": "",
+                              "thoughtspot_fit": "", "thoughtspot_angle": "",
+                              "source": "", "url": ""}],
+        "tools_suspected": [{"tool": "", "confidence": "low|medium|high",
+                              "source": "", "url": ""}],
+        "displacement_summary": "",
+    },
+    "case_studies": {
+        "recommended_case_studies": [{"company": "",
+                                       "url": "",
+                                       "why_chosen": "",
+                                       "key_metric": "",
+                                       "pain_match": "",
+                                       "tool_displacement_match": ""}],
+    },
+    "exec_profiles": {
+        "executives": [{"name": "", "title": "", "linkedin_url": "",
+                         "bio_summary": {"text": "", "source": "", "url": ""},
+                         "public_quotes":   [{"quote": "", "source": "", "url": ""}],
+                         "recent_activity": [{"text": "", "source": "", "url": ""}],
+                         "talking_points":  [{"point": "", "source": "", "url": ""}]}],
+    },
+    "sales_calls": {
+        "signals":              [{"sentiment": "POSITIVE|NEGATIVE|COLD",
+                                   "contact_name": "", "contact_email": "",
+                                   "brief_summary": "", "next_steps": "",
+                                   "recommended_action": ""}],
+        "total_rows":           0,
+        "meaningful_count":     0,
+        "voicemail_count":      0,
+        "no_content_count":     0,
+        "consolidated_next_steps": [{"priority": "HIGH|MED|LOW|DO NOT CONTACT",
+                                      "contact": "", "action": "", "owner": ""}],
+    },
+}
+
+# Key name aliases — these are normalized by normalize_raw() automatically
+# but subagents should use the canonical names above, not these aliases:
+#   source_url      → url          (tsumble role_highlights)
+#   tools_inferred  → tools_suspected (competitor_intel)
+#   call_summaries  → signals      (sales_calls)
+#   total_calls_found → total_rows (sales_calls)
+#   meaningful_calls  → meaningful_count (sales_calls)
+#   voicemail_calls   → voicemail_count (sales_calls)
+#   profiles        → executives   (exec_profiles)
+#   customer        → company      (case_studies)
+#   metric          → key_metric   (case_studies)
+#   rationale       → why_chosen   (case_studies)
+
+
+def _e(v) -> str:
 
 def _e(v) -> str:
     if v is None: return ""
