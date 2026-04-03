@@ -1,5 +1,13 @@
 """
-pg_report_builder.py — v5.5
+pg_report_builder.py — v5.6
+----------------------------------------------------------------
+v5.6 fixes:
+- Bug #1: Job posting URL reads "url" OR "source_url" (subagent key fallback)
+- Bug #2: Competitor suspected reads "tools_suspected" OR "tools_inferred"
+- Bug #4: why_now and why_anything rendered inside _why_ts_section() not via post-build patch
+- Bug #5: build_pg_report() now reads why_now and why_anything from header_data
+- Bug #6: Stage/opp rendered in hero section during initial build, not post-build patch
+- All post-build string injection removed — everything renders in the correct section builder
 """
 
 import datetime
@@ -22,9 +30,11 @@ LEG_RULES = [
     ("BUSINESS", ["ceo", "coo", "cfo", "cmo", "president", " gm ", "general manager", "svp", "evp", "managing director", "head of ", "operations", "finance", "marketing", "sales", "revenue", "strategy", "product"]),
 ]
 
+
 def _e(v) -> str:
     if v is None: return ""
     return _html.escape(str(v))
+
 
 def _text(v, fallback: str = "") -> str:
     if v is None: return fallback
@@ -38,6 +48,7 @@ def _text(v, fallback: str = "") -> str:
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
+
 def _src_badge(v) -> str:
     if not isinstance(v, dict): return ""
     src      = v.get("source") or v.get("source_url") or v.get("url") or ""
@@ -48,9 +59,11 @@ def _src_badge(v) -> str:
         return f" <a href='{_e(src)}' target='_blank' style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
+
 def _render_item(v) -> str:
     if isinstance(v, dict): return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
+
 
 def _classify_leg(title: str) -> str:
     if not title: return "UNKNOWN"
@@ -58,6 +71,7 @@ def _classify_leg(title: str) -> str:
     for leg, keywords in LEG_RULES:
         if any(kw in t for kw in keywords): return leg
     return "UNKNOWN"
+
 
 def _score_to_grade(score) -> str:
     try:
@@ -69,6 +83,7 @@ def _score_to_grade(score) -> str:
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
+
 def _decode_ts_date(val, fmt="%b %Y") -> str:
     from datetime import datetime
     if isinstance(val, dict):
@@ -78,6 +93,7 @@ def _decode_ts_date(val, fmt="%b %Y") -> str:
             except Exception: return str(inner)
     if val is None or val == "": return ""
     return str(val)
+
 
 def _classify_deal(days_cold, activity_rows, cols) -> str:
     if days_cold is None: return "unknown"
@@ -95,6 +111,7 @@ def _classify_deal(days_cold, activity_rows, cols) -> str:
     if dc > 60:  return "stalled"
     return "live"
 
+
 _CSS = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -106,7 +123,7 @@ body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', san
 .hero-eyebrow {{ font-size: 10px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px; position: relative; z-index: 1; }}
 .hero h1 {{ font-size: 40px; font-weight: 800; margin: 0 0 10px; line-height: 1.1; letter-spacing: -0.5px; position: relative; z-index: 1; }}
 .hero-sub {{ font-size: 15px; opacity: 0.65; margin: 0 0 32px; position: relative; z-index: 1; }}
-.hero-meta {{ display: flex; gap: 40px; position: relative; z-index: 1; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12); }}
+.hero-meta {{ display: flex; gap: 40px; position: relative; z-index: 1; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12); flex-wrap: wrap; }}
 .hero-meta-item {{ display: flex; flex-direction: column; gap: 3px; }}
 .hero-meta-label {{ font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; opacity: 0.5; }}
 .hero-meta-value {{ font-size: 13px; font-weight: 600; }}
@@ -127,6 +144,9 @@ body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', san
 .talking-point::before {{ content: '💡'; position: absolute; top: -16px; right: 24px; font-size: 100px; opacity: 0.06; pointer-events: none; }}
 .talking-point-label {{ font-size: 9px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: {LIGHT_BLUE}; margin-bottom: 14px; }}
 .talking-point p {{ font-size: 15px; line-height: 1.75; margin: 0; position: relative; z-index: 1; opacity: 0.95; }}
+.why-box {{ background: #F0F7FF; border: 1px solid #C7D7F8; border-left: 4px solid {BLUE}; border-radius: 12px; padding: 20px 24px; margin: 16px 0; }}
+.why-box-label {{ font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: {BLUE}; margin-bottom: 8px; }}
+.why-box p {{ font-size: 14px; line-height: 1.7; margin: 0; color: #1e3a5f; }}
 .stool-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }}
 .stool-leg {{ border-radius: 14px; padding: 20px; border: 1.5px solid #e2e8f8; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }}
 .stool-leg.empty {{ border: 2px dashed #fca5a5; background: #fff5f5; }}
@@ -166,7 +186,7 @@ tr:nth-child(even) td {{ background: #f8faff; }}
     .tab-nav {{ display: none !important; }}
     .tab-content {{ display: block !important; }}
     .section-header {{ break-after: avoid; }}
-    .card, .card-highlight, .signal-card, .stool-grid, .talking-point, .opp-card, .exec-card {{ break-inside: avoid; }}
+    .card, .card-highlight, .signal-card, .stool-grid, .talking-point, .opp-card, .exec-card, .why-box {{ break-inside: avoid; }}
     table {{ break-inside: avoid; }}
     .talking-point, .section-icon {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     .page-break {{ page-break-before: always; }}
@@ -185,12 +205,15 @@ function showTab(slug, tabId) {
 </script>
 """
 
+
 def _section_header(icon: str, title: str) -> str:
     return f"<div class='section-header'><div class='section-icon'>{icon}</div><h2 class='section-title'>{_e(title)}</h2></div>"
+
 
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
+
 
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
     out = f"<div class='signal-card'><div class='signal-card-title'>{title}</div>"
@@ -199,6 +222,7 @@ def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
         for b in bullets: out += f"<div class='money-row'><span>{b}</span></div>"
     out += "</div>"
     return out
+
 
 def _company_overview_section(raw: dict) -> str:
     wr   = raw.get("web_research", {})
@@ -228,13 +252,14 @@ def _company_overview_section(raw: dict) -> str:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
     return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
 
+
 def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) -> str:
     raw = raw or {}
     stakeholders = []
-    ep    = raw.get("exec_profiles", {})
-    execs = ep.get("executives", ep.get("profiles", []))
+    _ep = raw.get("exec_profiles", {})
+    execs = _ep.get("executives", _ep.get("profiles", []))
+    execs = [e for e in execs if isinstance(e, dict) and "Incumbent TBD" not in e.get("name", "")]
     for exec_data in execs:
-        if not isinstance(exec_data, dict): continue
         name  = exec_data.get("name", "")
         title = exec_data.get("title", "")
         if name and name.strip():
@@ -282,19 +307,17 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
             out += f"<div class='stool-leg-header'><div class='stool-leg-icon' style='background:{color}20;'>{icon}</div><span class='stool-leg-name' style='color:{color};'>{_e(leg_key)}</span></div>"
             if is_empty:
                 ep_suggestions = []
-                for exec_data in (lambda _e: _e.get("executives", _e.get("profiles", [])))(raw.get("exec_profiles", {})):
-                    if not isinstance(exec_data, dict): continue
-                    t = exec_data.get("title", "")
+                _ep2 = raw.get("exec_profiles", {})
+                for ed in _ep2.get("executives", _ep2.get("profiles", [])):
+                    if not isinstance(ed, dict): continue
+                    t = ed.get("title", "")
                     if _classify_leg(t) == leg_key:
-                        ep_suggestions.append(f"{exec_data.get('name', '')} — {t}")
+                        ep_suggestions.append(f"{ed.get('name', '')} — {t}")
                 out += "<p class='flag' style='margin:0;font-size:11px;'>⚠️ No contact identified in SFDC — add to target list</p>"
                 if ep_suggestions:
-                    out += (f"<p style='font-size:10px;color:#D97706;margin:6px 0 0;font-weight:600;'>"
-                            f"💡 Suggested from exec profiles: "
-                            + ", ".join(_e(s) for s in ep_suggestions[:2]) + "</p>")
+                    out += f"<p style='font-size:10px;color:#D97706;margin:6px 0 0;font-weight:600;'>💡 Suggested from exec profiles: " + ", ".join(_e(s) for s in ep_suggestions[:2]) + "</p>"
                 else:
-                    out += (f"<p style='font-size:10px;color:#94A3B8;margin:6px 0 0;'>"
-                            f"💡 No exec profile match — research {_e(leg_key)} contacts at {_e(account_name)}</p>")
+                    out += f"<p style='font-size:10px;color:#94A3B8;margin:6px 0 0;'>💡 Research {_e(leg_key)} contacts at {_e(account_name)}</p>"
             else:
                 for contact in contacts:
                     out += "<div class='stool-person'>"
@@ -314,6 +337,7 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
                        for pair in [("DATA", "BUSINESS"), ("IT", "ANALYST")] for k in pair) +
                "</div><p class='flag' style='margin-top:8px;'>⚠️ No stakeholder data. Run Exec Profile Builder.</p>")
     return out
+
 
 def _stakeholder_map_section(ts_data: dict) -> str:
     sfdc      = ts_data.get("sfdc_stakeholder", {})
@@ -371,6 +395,7 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     out += "</tbody></table>" + crossref
     return out
 
+
 def _render_claim_annotations(annotations: list) -> str:
     if not annotations: return ""
     flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
@@ -407,6 +432,7 @@ def _render_claim_annotations(annotations: list) -> str:
     out += "</div></details>"
     return out
 
+
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
         return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
@@ -419,10 +445,10 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
     pain_pts       = driver.get("pain_points", []) if driver else []
     financial_hook = money_in[0] if money_in else (money_out[0] if money_out else "")
     pain_signal    = pain_pts[0] if pain_pts else ""
-    ep        = raw.get("exec_profiles", {})
-    execs     = ep.get("executives", ep.get("profiles", []))
-    exec_name = execs[0].get("name", "") if execs and isinstance(execs[0], dict) else ""
-    addressee = _e(exec_name) if exec_name else f"your team at {_e(account_name)}"
+    _ep        = raw.get("exec_profiles", {})
+    execs      = _ep.get("executives", _ep.get("profiles", []))
+    exec_name  = execs[0].get("name", "") if execs and isinstance(execs[0], dict) else ""
+    addressee  = _e(exec_name) if exec_name else f"your team at {_e(account_name)}"
     tp_text = ""
     if pain_signal: tp_text += f"A lot of companies like {_e(account_name)} are dealing with {_e(pain_signal.lower())}. "
     if financial_hook:
@@ -452,6 +478,56 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
         out += _render_claim_annotations(citations)
     return out
 
+
+def _why_ts_section(matched_drivers: list, raw: dict,
+                    why_now: str = "", why_anything: str = "") -> str:
+    """
+    v5.6: Renders Why ThoughtSpot tab content including:
+    - Value drivers with evidence status
+    - Why Now box (from header_data["why_now"]) — rendered in content, not post-build
+    - Why Anything box (from header_data["why_anything"]) — rendered in content, not post-build
+    """
+    out = ""
+
+    # Why Now box — rendered HERE, not injected post-build
+    if why_now and why_now.strip():
+        out += (f"<div class='why-box'>"
+                f"<div class='why-box-label'>⚡ Why Now</div>"
+                f"<p>{_e(why_now)}</p>"
+                f"</div>")
+
+    # Why Anything box
+    if why_anything and why_anything.strip():
+        out += (f"<div class='why-box' style='border-left-color:#16A34A;background:#F0FDF4;border-color:#86EFAC;'>"
+                f"<div class='why-box-label' style='color:#16A34A;'>🎯 Why ThoughtSpot</div>"
+                f"<p>{_e(why_anything)}</p>"
+                f"</div>")
+
+    if not matched_drivers:
+        out += "<p style='color:#94A3B8;'>No value driver data available.</p>"
+        return out
+
+    for m in matched_drivers:
+        key    = m.get("key", "") if isinstance(m, dict) else m
+        driver = get_drivers(key)
+        if not driver: continue
+        label     = driver.get("label", key)
+        pain_pts  = driver.get("pain_points", [])
+        money_in  = driver.get("money_in", [])
+        money_out = driver.get("money_out", [])
+        evidence  = m.get("evidence", []) if isinstance(m, dict) else []
+        bullets   = [f"💰 {b}" for b in money_in[:2]] + [f"🛡️ {b}" for b in money_out[:2]]
+        meta = ""
+        if evidence:
+            meta += f"<span style='color:#64748b;font-size:11px;'>Matched signals: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
+            meta += f"<span style='font-size:10px;color:#16A34A;font-weight:600;'>✅ Grounded in account research</span>"
+        else:
+            meta += f"<span style='font-size:10px;color:#DC2626;font-weight:600;'>⚠️ No account-specific evidence — generic driver, verify before presenting</span>"
+        if pain_pts: meta += f"<br><span style='color:#475569;font-size:12px;'>Pain addressed: {_e(pain_pts[0])}</span>"
+        out += _signal_card(_e(label), meta, bullets)
+    return out
+
+
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
@@ -468,8 +544,9 @@ def _hiring_signals_section(raw: dict) -> str:
     out += "<table><thead><tr><th>Role</th><th>Dept</th><th>Location</th><th>Posted</th></tr></thead><tbody>"
     for r in roles[:10]:
         if isinstance(r, dict):
-            title      = _e(r.get("title", ""))
-            url        = r.get("url", "")
+            title = _e(r.get("title", ""))
+            # Bug #1 fix: try both "url" and "source_url"
+            url   = r.get("url", "") or r.get("source_url", "")
             title_link = f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};'>{title} ↗</a>" if url else title
             out += f"<tr><td>{title_link}</td><td>{_e(r.get('department', ''))}</td><td>{_e(r.get('location', ''))}</td><td>{_e(r.get('date_posted', ''))}</td></tr>"
         else:
@@ -477,10 +554,12 @@ def _hiring_signals_section(raw: dict) -> str:
     out += "</tbody></table>"
     return out
 
+
 def _competitor_section(raw: dict, matched_drivers: list) -> str:
     ci        = raw.get("competitor_intel", {})
     confirmed = ci.get("tools_confirmed", [])
-    suspected = ci.get("tools_suspected", [])
+    # Bug #2 fix: try both "tools_suspected" and "tools_inferred"
+    suspected = ci.get("tools_suspected", ci.get("tools_inferred", []))
     disp_sum  = ci.get("displacement_summary", "")
     if not confirmed and not suspected and not disp_sum:
         return "<p style='color:#94A3B8;'>No competitor data available.</p>"
@@ -501,7 +580,7 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
                 meta_parts.append("<span class='flag' style='font-size:10px;'>⚠️ No source — inferred, verify before presenting</span>")
             out += _signal_card(tool, "<br>".join(meta_parts))
     if suspected:
-        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected</h3><ul style='margin:0;padding-left:16px;'>"
+        out += "<h3 style='font-size:13px;font-weight:700;color:#64748B;margin:16px 0 8px;letter-spacing:0.5px;text-transform:uppercase;'>Suspected / Inferred</h3><ul style='margin:0;padding-left:16px;'>"
         for t in suspected[:5]:
             if isinstance(t, dict):
                 conf = t.get("confidence", "")
@@ -510,31 +589,7 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
         out += "</ul>"
     if disp_sum: out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
-
-def _value_drivers_section(matched_drivers: list) -> str:
-    if not matched_drivers: return "<p style='color:#94A3B8;'>No value driver data available.</p>"
-    out = ""
-    for m in matched_drivers:
-        key    = m.get("key", "") if isinstance(m, dict) else m
-        driver = get_drivers(key)
-        if not driver: continue
-        label     = driver.get("label", key)
-        pain_pts  = driver.get("pain_points", [])
-        money_in  = driver.get("money_in", [])
-        money_out = driver.get("money_out", [])
-        evidence  = m.get("evidence", []) if isinstance(m, dict) else []
-        bullets   = [f"💰 {b}" for b in money_in[:2]] + [f"🛡️ {b}" for b in money_out[:2]]
-        meta = ""
-        if evidence:
-            meta += f"<span style='color:#64748b;font-size:11px;'>Matched signals: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
-            meta += f"<span style='font-size:10px;color:#16A34A;font-weight:600;'>✅ Grounded in account research — see web research and competitor intel for sources</span>"
-        else:
-            meta += f"<span style='font-size:10px;color:#DC2626;font-weight:600;'>⚠️ No account-specific evidence — generic driver, verify before presenting</span>"
-        if pain_pts: meta += f"<br><span style='color:#475569;font-size:12px;'>Pain addressed: {_e(pain_pts[0])}</span>"
-        out += _signal_card(_e(label), meta, bullets)
-    return out
-
-def _deal_story_section(ts_data: dict) -> str:
+    def _deal_story_section(ts_data: dict) -> str:
     import re as _re
     ds_result  = ts_data.get("deal_stage", {})
     ft_result  = ts_data.get("deal_funnel_timing", {})
@@ -676,6 +731,7 @@ def _deal_story_section(ts_data: dict) -> str:
 </div>"""
     return out
 
+
 def _activity_section(ts_data: dict) -> str:
     import re as _re
     act  = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
@@ -717,6 +773,7 @@ def _activity_section(ts_data: dict) -> str:
     out += "</tbody></table>"
     return out
 
+
 def _sales_call_section(ts_data: dict) -> str:
     flags     = ts_data.get("meddpicc_flags", {})
     detail    = ts_data.get("meddpicc_detail", {})
@@ -752,6 +809,7 @@ def _sales_call_section(ts_data: dict) -> str:
         out += f"<tr><td><b>{_e(label)}</b></td><td>{v_display}</td><td>{d_display}</td></tr>"
     out += "</tbody></table>"
     return out
+
 
 def _gong_calls_section(raw: dict) -> str:
     calls = raw.get("sales_calls", {})
@@ -802,6 +860,7 @@ def _gong_calls_section(raw: dict) -> str:
         out += "</tbody></table>"
     return out
 
+
 def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
@@ -817,6 +876,7 @@ def _6sense_section(ts_data: dict) -> str:
                 f"<td><span style='font-weight:600;'>{_e(reach_grade)}</span></td></tr>")
     out += "</tbody></table>"
     return out
+
 
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
@@ -838,6 +898,7 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
         out += "</div>"
     out += "</div>"
     return out
+
 
 def _exec_profiles_section(raw: dict) -> str:
     _ep = raw.get("exec_profiles", {})
@@ -862,9 +923,8 @@ def _exec_profiles_section(raw: dict) -> str:
         out += "</div>"
         bio_text = _text(bio)
         if bio_text: out += f"<p style='font-size:13px;color:#334155;margin:0 0 10px;'>{_e(bio_text)}{_src_badge(bio)}</p>"
-        _src_lbl = (f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};'>LinkedIn profile ↗</a>"
-                    if li_url else "Web search")
-        out += f"<p style='font-size:11px;color:#94A3B8;margin:0 0 8px;'>Source: {_src_lbl}</p>"
+        src_lbl = (f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};'>LinkedIn profile ↗</a>" if li_url else "Web search")
+        out += f"<p style='font-size:11px;color:#94A3B8;margin:0 0 8px;'>Source: {src_lbl}</p>"
         if activity:
             out += "<p style='font-size:11px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;'>Recent Activity</p>"
             out += "<ul style='margin:0;padding-left:16px;'>"
@@ -885,6 +945,7 @@ def _exec_profiles_section(raw: dict) -> str:
         out += "</div>"
     return out
 
+
 def _normalize_outreach(outreach_data: dict) -> dict:
     if not outreach_data: return {}
     if "sequences" in outreach_data and isinstance(outreach_data["sequences"], list):
@@ -894,10 +955,8 @@ def _normalize_outreach(outreach_data: dict) -> dict:
                 if isinstance(linkedin, dict):
                     body = linkedin.get("message", linkedin.get("body", str(linkedin)))
                     seq["linkedin_messages"] = [{"body": body, "claim_annotations": []}]
-                elif isinstance(linkedin, list):
-                    seq["linkedin_messages"] = linkedin
-                else:
-                    seq["linkedin_messages"] = [{"body": str(linkedin), "claim_annotations": []}]
+                elif isinstance(linkedin, list): seq["linkedin_messages"] = linkedin
+                else: seq["linkedin_messages"] = [{"body": str(linkedin), "claim_annotations": []}]
             if "linkedin_messages" not in seq: seq["linkedin_messages"] = []
             seq_annotations = seq.get("claim_annotations", [])
             if seq_annotations:
@@ -945,8 +1004,8 @@ def _normalize_outreach(outreach_data: dict) -> dict:
             sequences.append({"contact_name": contact.get("name", ""), "contact_title": contact.get("title", ""),
                                "contact_linkedin": contact.get("linkedin_url", ""), "emails": emails, "linkedin_messages": li_msgs})
         return {"sequences": sequences}
-    emails      = []
-    li_msgs     = []
+    emails = []
+    li_msgs = []
     annotations = outreach_data.get("claim_annotations", [])
     for key in sorted(outreach_data.keys()):
         if key == "claim_annotations": continue
@@ -969,6 +1028,7 @@ def _normalize_outreach(outreach_data: dict) -> dict:
     if emails or li_msgs:
         return {"sequences": [{"contact_name": "", "contact_title": "", "emails": emails, "linkedin_messages": li_msgs}]}
     return outreach_data
+
 
 def _outreach_section(outreach_data: dict) -> str:
     outreach_data = _normalize_outreach(outreach_data)
@@ -1016,6 +1076,7 @@ def _outreach_section(outreach_data: dict) -> str:
         out += "</div>"
     return out
 
+
 def _get_tabs(phase: int) -> list:
     tabs = [
         ("overview",      "🏢 Overview"),
@@ -1033,6 +1094,7 @@ def _get_tabs(phase: int) -> list:
     if phase == 2: tabs.append(("outreach", "✉️ Outreach"))
     return tabs
 
+
 def _build_html_page(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head>"
@@ -1042,7 +1104,88 @@ def _build_html_page(title: str, body: str) -> str:
         + _CSS + "</head><body>" + body + _JS + "</body></html>"
     )
 
-def build_pg_report(
+
+def normalize_raw(raw: dict) -> dict:
+    """
+    v5.6: Normalize all subagent output key names to canonical form before building.
+    Absorbs schema drift so section builders never see unexpected key names.
+    Call this once at the top of build_pg_report() before any section builder runs.
+    """
+    # --- exec_profiles ---
+    ep = raw.get("exec_profiles", {})
+    if isinstance(ep, dict):
+        if "profiles" in ep and "executives" not in ep:
+            ep["executives"] = ep.pop("profiles")
+
+    # --- competitor_intel ---
+    ci = raw.get("competitor_intel", {})
+    if isinstance(ci, dict):
+        # tools_inferred → tools_suspected
+        if "tools_inferred" in ci and "tools_suspected" not in ci:
+            ci["tools_suspected"] = ci.pop("tools_inferred")
+        # thoughtspot_angle → displacement_angle (fallback already in section builder)
+        for tool in ci.get("tools_confirmed", []):
+            if isinstance(tool, dict):
+                if "thoughtspot_angle" in tool and "displacement_angle" not in tool:
+                    tool["displacement_angle"] = tool["thoughtspot_angle"]
+
+    # --- tsumble / job postings ---
+    ts = raw.get("tsumble", {})
+    if isinstance(ts, dict):
+        for role in ts.get("role_highlights", []):
+            if isinstance(role, dict):
+                # source_url → url
+                if "source_url" in role and "url" not in role:
+                    role["url"] = role["source_url"]
+                # signal_tier → thoughtspot_signal (normalize either key)
+                if "signal_tier" in role and "thoughtspot_signal" not in role:
+                    role["thoughtspot_signal"] = role["signal_tier"]
+
+    # --- web_research ---
+    wr = raw.get("web_research", {})
+    if isinstance(wr, dict):
+        # thoughtspot_fit_signals items: signal_tier → normalize
+        for sig in wr.get("thoughtspot_fit_signals", []):
+            if isinstance(sig, dict) and "signal_tier" not in sig and "tier" in sig:
+                sig["signal_tier"] = sig["tier"]
+        # pain_points: ensure each has source field
+        for pp in wr.get("pain_points", []):
+            if isinstance(pp, dict) and "source" not in pp:
+                pp["source"] = pp.get("url", "inferred")
+
+    # --- case_studies ---
+    cs = raw.get("case_studies", {})
+    if isinstance(cs, dict):
+        for study in cs.get("recommended_case_studies", []):
+            if isinstance(study, dict):
+                # customer → company
+                if "customer" in study and "company" not in study:
+                    study["company"] = study["customer"]
+                # metric → key_metric
+                if "metric" in study and "key_metric" not in study:
+                    study["key_metric"] = study["metric"]
+                # rationale → why_chosen
+                if "rationale" in study and "why_chosen" not in study:
+                    study["why_chosen"] = study["rationale"]
+
+    # --- sales_calls ---
+    sc = raw.get("sales_calls", {})
+    if isinstance(sc, dict):
+        # call_summaries → signals
+        if "call_summaries" in sc and "signals" not in sc:
+            sc["signals"] = sc["call_summaries"]
+        # total_calls_found → total_rows
+        if "total_calls_found" in sc and "total_rows" not in sc:
+            sc["total_rows"] = sc["total_calls_found"]
+        # meaningful_calls → meaningful_count
+        if "meaningful_calls" in sc and "meaningful_count" not in sc:
+            sc["meaningful_count"] = sc["meaningful_calls"]
+        # voicemail_calls → voicemail_count
+        if "voicemail_calls" in sc and "voicemail_count" not in sc:
+            sc["voicemail_count"] = sc["voicemail_calls"]
+
+    return raw
+    def build_pg_report(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1055,15 +1198,40 @@ def build_pg_report(
 ) -> dict:
     """
     Build a PG report HTML string with full ThoughtSpot branding.
+    v5.6: normalize_raw() called first to absorb subagent schema drift.
+    v5.6: why_now and why_anything rendered inside _why_ts_section(), not post-build.
+    v5.6: stage/opp rendered in hero section during initial build, not post-build.
     Returns {"filename", "html", "slug", "phase"}
     """
+    # v5.6: normalize all subagent output key names FIRST before any section builder runs
+    raw           = normalize_raw(raw or {})
     outreach_data = outreach_data or {}
     tabs          = _get_tabs(phase)
     owner         = header_data.get("owner_name", "AE")
     region        = header_data.get("region", "")
     now           = datetime.datetime.utcnow().strftime("%B %d, %Y")
 
+    # v5.6: read why_now and why_anything from header_data — rendered in builder, not post-build
+    why_now      = header_data.get("why_now", "")
+    why_anything = header_data.get("why_anything", "")
+
+    # v5.6: read stage and opp from header_data for hero section — rendered in builder, not post-build
+    opp_stage = header_data.get("opp_stage", "")
+    opp_name  = header_data.get("opp_name", "")
+
+    # Also try to extract stage/opp from ts_data if not in header_data
+    if not opp_stage or not opp_name:
+        ds = ts_data.get("deal_stage", {})
+        ds_rows = ds.get("data_rows", [])
+        ds_cols = ds.get("column_names", [])
+        if ds_rows and ds_cols:
+            ds_rec    = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
+            opp_stage = opp_stage or ds_rec.get("Opportunity Stage Maximum Name", "")
+            opp_name  = opp_name  or ds_rec.get("Opportunity Name", "")
+
     body  = "<div class='page'>"
+
+    # Hero section — all data rendered here, no post-build injection
     body += "<div class='hero'>"
     body += "<div class='hero-eyebrow'>Account Intelligence Report</div>"
     body += f"<h1>{_e(account_name)}</h1>"
@@ -1074,8 +1242,14 @@ def build_pg_report(
         body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Region</span><span class='hero-meta-value'>{_e(region)}</span></div>"
     body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Generated</span><span class='hero-meta-value'>{now}</span></div>"
     body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Status</span><span class='hero-meta-value'>{'📄 Draft' if phase == 1 else '✅ Final'}</span></div>"
+    # v5.6: stage and opp rendered directly here — no post-build string injection
+    if opp_stage:
+        body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Stage</span><span class='hero-meta-value'>{_e(opp_stage)}</span></div>"
+    if opp_name:
+        body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Opportunity</span><span class='hero-meta-value'>{_e(opp_name)}</span></div>"
     body += "</div></div>"
 
+    # Tab navigation
     body += "<div class='tab-nav'>"
     for i, (tab_id, tab_label) in enumerate(tabs):
         active = "active" if i == 0 else ""
@@ -1085,6 +1259,7 @@ def build_pg_report(
                  f"{_e(tab_label)}</button>")
     body += "</div>"
 
+    # Tab content
     body += "<div class='content'>"
     for i, (tab_id, _) in enumerate(tabs):
         active = "active" if i == 0 else ""
@@ -1092,6 +1267,7 @@ def build_pg_report(
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
+
         elif tab_id == "stakeholders":
             body += _section_header("👥", "4-Leg Stool")
             body += _four_leg_stool_section(ts_data, account_name, raw)
@@ -1099,33 +1275,44 @@ def build_pg_report(
             body += _stakeholder_map_section(ts_data)
             body += _section_header("💡", "ThoughtSpot Talking Point")
             body += _talking_point_section(account_name, matched_drivers, raw)
+
         elif tab_id == "why_ts":
             body += _section_header("🎯", "Why ThoughtSpot")
-            body += _value_drivers_section(matched_drivers)
+            # v5.6: why_now and why_anything rendered here — not post-build injection
+            body += _why_ts_section(matched_drivers, raw, why_now=why_now, why_anything=why_anything)
+
         elif tab_id == "competitor":
             body += _section_header("🔍", "Competitor Landscape")
             body += _competitor_section(raw, matched_drivers)
+
         elif tab_id == "deal_story":
             body += _section_header("📋", "Deal Story")
             body += _deal_story_section(ts_data)
+
         elif tab_id == "sales_call":
             body += _section_header("📞", "Sales Call Analysis")
             body += _sales_call_section(ts_data)
+
         elif tab_id == "gong_calls":
             body += _section_header("🎙", "Gong Call Signals")
             body += _gong_calls_section(raw)
+
         elif tab_id == "6sense":
             body += _section_header("📡", "6Sense Intent")
             body += _6sense_section(ts_data)
+
         elif tab_id == "roles":
             body += _section_header("💼", "Hiring Signals")
             body += _hiring_signals_section(raw)
+
         elif tab_id == "case_studies":
             body += _section_header("📚", "Recommended Case Studies")
             body += _case_studies_section(raw, account_name)
+
         elif tab_id == "exec_profiles":
             body += _section_header("🧑", "Executive Profiles")
             body += _exec_profiles_section(raw)
+
         elif tab_id == "outreach":
             body += _section_header("✉️", "Outreach Sequences")
             body += _outreach_section(outreach_data)
@@ -1138,10 +1325,9 @@ def build_pg_report(
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.5] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.6] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-
-def build_onepager(
+    def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1153,6 +1339,8 @@ def build_onepager(
     No internal data. ThoughtSpot-branded design.
     Returns {"filename", "html", "slug"}
     """
+    # normalize before reading
+    raw      = normalize_raw(raw or {})
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
     desc     = _text(wr.get("description", {}))
@@ -1268,5 +1456,5 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.5] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.6] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
