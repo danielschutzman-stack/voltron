@@ -469,18 +469,36 @@ def _stakeholder_map_section(ts_data: dict) -> str:
 
 def _render_claim_annotations(annotations: list) -> str:
     if not annotations: return ""
-    flags            = [a for a in annotations if isinstance(a, dict) and a.get("flag")]
+
+    # Normalize — handle both dict and string annotation items
+    normalized = []
+    for ann in annotations:
+        if isinstance(ann, dict):
+            normalized.append(ann)
+        elif isinstance(ann, str) and ann.strip():
+            parts = ann.split(" — sourced from ", 1)
+            normalized.append({
+                "claim":       parts[0].strip(),
+                "basis":       parts[1].strip() if len(parts) > 1 else "",
+                "source":      "",
+                "source_type": "research",
+                "confidence":  "inferred",
+                "flag":        "",
+            })
+
+    if not normalized: return ""
+
+    flags            = [a for a in normalized if a.get("flag")]
     unverified_count = len(flags)
     out  = "<details style='margin-top:8px;'>"
     out += (f"<summary style='cursor:pointer;font-size:11px;font-weight:700;color:#64748b;"
             f"padding:6px 10px;background:#f1f5f9;border-radius:6px;list-style:none;"
-            f"display:flex;align-items:center;gap:8px;'>🔍 Claim sources ({len(annotations)})")
+            f"display:flex;align-items:center;gap:8px;'>🔍 Claim sources ({len(normalized)})")
     if unverified_count:
         out += f" <span style='background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:10px;font-size:10px;'>⚠️ {unverified_count} to verify</span>"
     out += "</summary>"
     out += "<div style='margin-top:8px;border:1px solid #e2e8f8;border-radius:8px;overflow:hidden;'>"
-    for ann in annotations:
-        if not isinstance(ann, dict): continue
+    for ann in normalized:
         claim      = _e(ann.get("claim", ""))
         basis      = _e(ann.get("basis", ""))
         source     = ann.get("source", "")
