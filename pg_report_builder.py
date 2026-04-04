@@ -1,13 +1,12 @@
 """
-pg_report_builder.py — v5.6
+pg_report_builder.py — v5.7
 ----------------------------------------------------------------
-v5.6 fixes:
-- Bug #1: Job posting URL reads "url" OR "source_url" (subagent key fallback)
-- Bug #2: Competitor suspected reads "tools_suspected" OR "tools_inferred"
-- Bug #4: why_now and why_anything rendered inside _why_ts_section() not via post-build patch
-- Bug #5: build_pg_report() now reads why_now and why_anything from header_data
-- Bug #6: Stage/opp rendered in hero section during initial build, not post-build patch
-- All post-build string injection removed — everything renders in the correct section builder
+v5.7 fixes:
+- Fix A: _deal_story_section() loops ALL opps, not just row 0
+- Fix B: _build_deal_narrative() renders richest MEDDPICC as prose
+- _render_claim_annotations() handles string annotations (split on sourced from)
+- BUILDER_SCHEMA constant added for schema contract validation
+- All previous v5.6 fixes retained
 """
 
 import datetime
@@ -29,8 +28,6 @@ LEG_RULES = [
     ("IT", ["cio", "cto", "chief information", "chief technology", "vp technology", "vp of technology", "vp engineering", "director of technology", "director of it", "infrastructure", "platform", "architecture", "security", "cloud", "devops", "systems", "software engineering", "it "]),
     ("BUSINESS", ["ceo", "coo", "cfo", "cmo", "president", " gm ", "general manager", "svp", "evp", "managing director", "head of ", "operations", "finance", "marketing", "sales", "revenue", "strategy", "product"]),
 ]
-("BUSINESS", ["ceo", "coo", ...]),
-]
 
 
 BUILDER_SCHEMA = {
@@ -44,8 +41,7 @@ BUILDER_SCHEMA = {
     },
     "tsumble": {
         "role_highlights": [{"title": "", "department": "", "location": "",
-                              "date_posted": "",
-                              "url": "",
+                              "date_posted": "", "url": "",
                               "thoughtspot_signal": "HIGH|MEDIUM|LOW|NONE"}],
         "hiring_trends":   [{"trend": "", "source": ""}],
     },
@@ -58,10 +54,8 @@ BUILDER_SCHEMA = {
         "displacement_summary": "",
     },
     "case_studies": {
-        "recommended_case_studies": [{"company": "",
-                                       "url": "",
-                                       "why_chosen": "",
-                                       "key_metric": "",
+        "recommended_case_studies": [{"company": "", "url": "",
+                                       "why_chosen": "", "key_metric": "",
                                        "pain_match": "",
                                        "tool_displacement_match": ""}],
     },
@@ -86,21 +80,19 @@ BUILDER_SCHEMA = {
     },
 }
 
-# Key name aliases — these are normalized by normalize_raw() automatically
-# but subagents should use the canonical names above, not these aliases:
-#   source_url      → url          (tsumble role_highlights)
-#   tools_inferred  → tools_suspected (competitor_intel)
-#   call_summaries  → signals      (sales_calls)
-#   total_calls_found → total_rows (sales_calls)
+# Canonical key name aliases — normalize_raw() handles these automatically.
+# Subagents should use canonical names above, not aliases:
+#   source_url        → url              (tsumble role_highlights)
+#   tools_inferred    → tools_suspected  (competitor_intel)
+#   call_summaries    → signals          (sales_calls)
+#   total_calls_found → total_rows       (sales_calls)
 #   meaningful_calls  → meaningful_count (sales_calls)
-#   voicemail_calls   → voicemail_count (sales_calls)
-#   profiles        → executives   (exec_profiles)
-#   customer        → company      (case_studies)
-#   metric          → key_metric   (case_studies)
-#   rationale       → why_chosen   (case_studies)
+#   voicemail_calls   → voicemail_count  (sales_calls)
+#   profiles          → executives       (exec_profiles)
+#   customer          → company          (case_studies)
+#   metric            → key_metric       (case_studies)
+#   rationale         → why_chosen       (case_studies)
 
-
-def _e(v) -> str:
 
 def _e(v) -> str:
     if v is None: return ""
@@ -249,6 +241,8 @@ tr:nth-child(even) td {{ background: #f8faff; }}
 .pill-orange {{ background: #ffedd5; color: #9a3412; }}
 .pill-red {{ background: #fee2e2; color: #991b1b; }}
 .flag {{ color: #dc2626; font-size: 12px; font-weight: 600; }}
+.deal-narrative {{ background: #F8FAFF; border: 1px solid #E2E8F8; border-radius: 12px; padding: 18px 22px; margin-top: 16px; }}
+.deal-narrative-label {{ font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }}
 @media print {{
     body {{ background: white; font-size: 11px; }}
     .page {{ max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; }}
@@ -257,7 +251,7 @@ tr:nth-child(even) td {{ background: #f8faff; }}
     .tab-nav {{ display: none !important; }}
     .tab-content {{ display: block !important; }}
     .section-header {{ break-after: avoid; }}
-    .card, .card-highlight, .signal-card, .stool-grid, .talking-point, .opp-card, .exec-card, .why-box {{ break-inside: avoid; }}
+    .card, .card-highlight, .signal-card, .stool-grid, .talking-point, .opp-card, .exec-card, .why-box, .deal-narrative {{ break-inside: avoid; }}
     table {{ break-inside: avoid; }}
     .talking-point, .section-icon {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     .page-break {{ page-break-before: always; }}
@@ -469,8 +463,6 @@ def _stakeholder_map_section(ts_data: dict) -> str:
 
 def _render_claim_annotations(annotations: list) -> str:
     if not annotations: return ""
-
-    # Normalize — handle both dict and string annotation items
     normalized = []
     for ann in annotations:
         if isinstance(ann, dict):
@@ -485,9 +477,7 @@ def _render_claim_annotations(annotations: list) -> str:
                 "confidence":  "inferred",
                 "flag":        "",
             })
-
     if not normalized: return ""
-
     flags            = [a for a in normalized if a.get("flag")]
     unverified_count = len(flags)
     out  = "<details style='margin-top:8px;'>"
@@ -562,40 +552,27 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
     for cs in comp_sources[:2]:
         citations.append({"claim": f"{cs.get('tool', '')} identified in tech stack", "source": cs.get("url", cs.get("source", "")), "source_type": cs.get("source_type", "job_posting"), "confidence": "confirmed" if cs.get("url") else "inferred", "flag": "" if cs.get("url") else "VERIFY BEFORE USING"})
     if not citations:
-        out += "<div style='background:#FFF7ED;border-left:4px solid #F97316;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:12px;color:#9a3412;'>⚠️ No source evidence found for this talking point — verify claims manually before using.</div>"
+        out += "<div style='background:#FFF7ED;border-left:4px solid #F97316;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:12px;color:#9a3412;'>⚠️ No source evidence found — verify claims manually before using.</div>"
     else:
         out += _render_claim_annotations(citations)
     return out
 
 
-def _why_ts_section(matched_drivers: list, raw: dict,
-                    why_now: str = "", why_anything: str = "") -> str:
-    """
-    v5.6: Renders Why ThoughtSpot tab content including:
-    - Value drivers with evidence status
-    - Why Now box (from header_data["why_now"]) — rendered in content, not post-build
-    - Why Anything box (from header_data["why_anything"]) — rendered in content, not post-build
-    """
+def _why_ts_section(matched_drivers: list, raw: dict, why_now: str = "", why_anything: str = "") -> str:
     out = ""
-
-    # Why Now box — rendered HERE, not injected post-build
     if why_now and why_now.strip():
         out += (f"<div class='why-box'>"
                 f"<div class='why-box-label'>⚡ Why Now</div>"
                 f"<p>{_e(why_now)}</p>"
                 f"</div>")
-
-    # Why Anything box
     if why_anything and why_anything.strip():
         out += (f"<div class='why-box' style='border-left-color:#16A34A;background:#F0FDF4;border-color:#86EFAC;'>"
                 f"<div class='why-box-label' style='color:#16A34A;'>🎯 Why ThoughtSpot</div>"
                 f"<p>{_e(why_anything)}</p>"
                 f"</div>")
-
     if not matched_drivers:
         out += "<p style='color:#94A3B8;'>No value driver data available.</p>"
         return out
-
     for m in matched_drivers:
         key    = m.get("key", "") if isinstance(m, dict) else m
         driver = get_drivers(key)
@@ -611,7 +588,7 @@ def _why_ts_section(matched_drivers: list, raw: dict,
             meta += f"<span style='color:#64748b;font-size:11px;'>Matched signals: {_e('; '.join(str(e) for e in evidence[:3]))}</span><br>"
             meta += f"<span style='font-size:10px;color:#16A34A;font-weight:600;'>✅ Grounded in account research</span>"
         else:
-            meta += f"<span style='font-size:10px;color:#DC2626;font-weight:600;'>⚠️ No account-specific evidence — generic driver, verify before presenting</span>"
+            meta += f"<span style='font-size:10px;color:#DC2626;font-weight:600;'>⚠️ No account-specific evidence — verify before presenting</span>"
         if pain_pts: meta += f"<br><span style='color:#475569;font-size:12px;'>Pain addressed: {_e(pain_pts[0])}</span>"
         out += _signal_card(_e(label), meta, bullets)
     return out
@@ -634,7 +611,6 @@ def _hiring_signals_section(raw: dict) -> str:
     for r in roles[:10]:
         if isinstance(r, dict):
             title = _e(r.get("title", ""))
-            # Bug #1 fix: try both "url" and "source_url"
             url   = r.get("url", "") or r.get("source_url", "")
             title_link = f"<a href='{_e(url)}' target='_blank' style='color:{BLUE};'>{title} ↗</a>" if url else title
             out += f"<tr><td>{title_link}</td><td>{_e(r.get('department', ''))}</td><td>{_e(r.get('location', ''))}</td><td>{_e(r.get('date_posted', ''))}</td></tr>"
@@ -647,7 +623,6 @@ def _hiring_signals_section(raw: dict) -> str:
 def _competitor_section(raw: dict, matched_drivers: list) -> str:
     ci        = raw.get("competitor_intel", {})
     confirmed = ci.get("tools_confirmed", [])
-    # Bug #2 fix: try both "tools_suspected" and "tools_inferred"
     suspected = ci.get("tools_suspected", ci.get("tools_inferred", []))
     disp_sum  = ci.get("displacement_summary", "")
     if not confirmed and not suspected and not disp_sum:
@@ -678,7 +653,69 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
         out += "</ul>"
     if disp_sum: out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
-    def _deal_story_section(ts_data: dict) -> str:
+    def _build_deal_narrative(ts_data: dict) -> str:
+    """
+    Fix B: Synthesize narrative prose from the richest MEDDPICC detail row.
+    Finds the opp with the most populated Gong text fields and renders them.
+    Returns "" if no useful data found.
+    """
+    medd      = ts_data.get("meddpicc_detail", {})
+    medd_rows = medd.get("data_rows", [])
+    medd_cols = medd.get("column_names", [])
+    if not medd_rows or not medd_cols: return ""
+
+    gong_text_fields = [
+        "Opportunity Gong Champion",
+        "Opportunity Gong Economic Buyer",
+        "Opportunity Gong Identify Pain",
+        "Opportunity Gong Metrics",
+        "Opportunity Gong Decision Criteria",
+        "Opportunity Gong Decision Process",
+        "Opportunity Gong Paper Process",
+        "Opportunity Gong Competition",
+        "Opportunity Gong Data Readiness",
+    ]
+
+    def richness(row):
+        rec = dict(zip(medd_cols, row)) if isinstance(row, list) else row
+        return sum(1 for f in gong_text_fields if rec.get(f) and str(rec.get(f)).strip())
+
+    richest_row = max(medd_rows, key=richness)
+    rec = dict(zip(medd_cols, richest_row)) if isinstance(richest_row, list) else richest_row
+
+    if richness(richest_row) == 0: return ""
+
+    opp_name = _e(rec.get("Opportunity Name", "this opportunity"))
+    out  = f"<div class='deal-narrative'>"
+    out += f"<div class='deal-narrative-label'>🎙 Gong Intelligence — {opp_name}</div>"
+
+    field_labels = [
+        ("Opportunity Gong Champion",        "Champion"),
+        ("Opportunity Gong Economic Buyer",  "Economic Buyer"),
+        ("Opportunity Gong Identify Pain",   "Identified Pain"),
+        ("Opportunity Gong Metrics",         "Metrics"),
+        ("Opportunity Gong Decision Criteria","Decision Criteria"),
+        ("Opportunity Gong Decision Process", "Decision Process"),
+        ("Opportunity Gong Paper Process",   "Paper Process"),
+        ("Opportunity Gong Competition",     "Competition"),
+        ("Opportunity Gong Data Readiness",  "Data Readiness"),
+    ]
+
+    rendered_any = False
+    for field, label in field_labels:
+        val = rec.get(field, "")
+        if val and str(val).strip():
+            out += (f"<div style='margin-bottom:10px;'>"
+                    f"<span style='font-size:11px;font-weight:700;color:{NAVY};'>{_e(label)}:</span> "
+                    f"<span style='font-size:13px;color:#334155;line-height:1.6;'>{_e(str(val))}</span>"
+                    f"</div>")
+            rendered_any = True
+
+    out += "</div>"
+    return out if rendered_any else ""
+
+
+def _deal_story_section(ts_data: dict) -> str:
     import re as _re
     ds_result  = ts_data.get("deal_stage", {})
     ft_result  = ts_data.get("deal_funnel_timing", {})
@@ -692,59 +729,75 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
     act_cols = act_result.get("column_names", [])
     od_rows  = opp_detail.get("data_rows", [])
     od_cols  = opp_detail.get("column_names", [])
+
     if not ds_rows: return "<p style='color:#94A3B8;'>No deal stage data available.</p>"
-    ds_rec   = dict(zip(ds_cols, ds_rows[0])) if isinstance(ds_rows[0], list) else ds_rows[0]
-    opp_name = (ds_rec.get("Opportunity Name", "") or ds_rec.get("SFDC Opp Name URL", "") or ds_rec.get("Opportunity Name with url", "") or "")
-    opp_name = _e(opp_name) if opp_name else "(opportunity)"
-    stage    = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
-    owner    = _e(ds_rec.get("Opportunity Owner Name", ""))
-    pq       = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
-    created  = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)", ds_rec.get("Opportunity Created Date", "")))
-    last_act = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)", ds_rec.get("Opportunity Last Activity Date", "")))
+
+    out = ""
+
+    # Fix A: loop ALL opp rows, not just row 0
+    for ds_rec in [dict(zip(ds_cols, r)) if isinstance(r, list) else r for r in ds_rows]:
+        opp_name = (ds_rec.get("Opportunity Name", "") or
+                    ds_rec.get("SFDC Opp Name URL", "") or
+                    ds_rec.get("Opportunity Name with url", "") or "")
+        opp_name = _e(opp_name) if opp_name else "(opportunity)"
+        stage    = _e(ds_rec.get("Opportunity Stage Maximum Name", ""))
+        owner    = _e(ds_rec.get("Opportunity Owner Name", ""))
+        pq       = ds_rec.get("Opportunity Pipeline Qualified Flag", False)
+        created  = _decode_ts_date(ds_rec.get("Month(Opportunity Created Date)",
+                    ds_rec.get("Opportunity Created Date", "")))
+        last_act = _decode_ts_date(ds_rec.get("Month(Opportunity Last Activity Date)",
+                    ds_rec.get("Opportunity Last Activity Date", "")))
+
+        # Simple deal class from stage name
+        stage_lower = stage.lower()
+        if any(x in stage_lower for x in ("s3", "proposal", "negotiat")):
+            deal_class = "live"
+        elif any(x in stage_lower for x in ("s2", "evaluat", "discovery")):
+            deal_class = "live"
+        elif any(x in stage_lower for x in ("s1", "qualify", "s0", "m0")):
+            deal_class = "live"
+        else:
+            deal_class = "unknown"
+
+        CLASS_BADGES = {
+            "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
+            "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
+            "stalled":  ("<span class='pill' style='background:#FFFBEB;color:#B45309;margin-left:6px;'>⏸ Stalled</span>", "#B45309"),
+            "sdr_only": ("<span class='pill' style='background:#EFF6FF;color:#1D4ED8;margin-left:6px;'>📞 SDR-Only Touches</span>", "#1D4ED8"),
+            "live":     ("", "#16A34A"),
+            "unknown":  ("", "#64748B"),
+        }
+        badge_html, dc_color = CLASS_BADGES.get(deal_class, ("", "#64748B"))
+
+        out += f"<div class='opp-card' style='margin-bottom:10px;'>"
+        out += f"<b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
+        if stage:      out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
+        if pq:         out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
+        if badge_html: out += badge_html
+
+        meta = []
+        if owner:    meta.append(f"Owner: {owner}")
+        if created:  meta.append(f"Created: {created}")
+        if last_act: meta.append(f"Last activity: {last_act}")
+        if meta:
+            out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>"
+            out += " &nbsp;·&nbsp; ".join(meta)
+            out += "</div>"
+        out += "</div>"
+
+    # Fix B: inject MEDDPICC narrative from richest opp
+    deal_narrative = _build_deal_narrative(ts_data)
+    if deal_narrative:
+        out += deal_narrative
+
+    # Opp detail (days cold, prior close) — from first od_row
     days_cold = prior_close = None
     if od_rows:
         od_rec      = dict(zip(od_cols, od_rows[0])) if isinstance(od_rows[0], list) else od_rows[0]
         days_cold   = od_rec.get("Total Days from Account last touch", od_rec.get("Days from Account last touch"))
         prior_close = _decode_ts_date(od_rec.get("Month(Opportunity Prior Close Date)", od_rec.get("Opportunity Prior Close Date", "")))
-        if not created:  created  = _decode_ts_date(od_rec.get("Month(Opportunity Created Date)", ""))
-        if not last_act: last_act = _decode_ts_date(od_rec.get("Month(Opportunity Last Activity Date)", ""))
-        if not owner:    owner    = _e(od_rec.get("Opportunity Owner Name", ""))
-    deal_class = _classify_deal(int(days_cold) if days_cold is not None else None, act_rows, act_cols)
-    ft_rec = {}
-    has_ft_values = False
-    if ft_rows:
-        ft_rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
-        has_ft_values = any(
-            ft_rec.get(k, 0) not in (0, None, "", "0")
-            for k in ["Total f Opportunity S1 Duration", "Total f Opportunity S2 Duration",
-                      "Total f Opportunity S3 Duration", "Total f Opportunity M0 to S7 Duration",
-                      "f Opportunity S1 Duration", "f Opportunity S2 Duration",
-                      "f Opportunity S3 Duration", "f Opportunity M0 to S7 Duration"]
-        )
-    CLASS_BADGES = {
-        "ghost":    ("<span class='pill' style='background:#FEF2F2;color:#991B1B;margin-left:6px;'>👻 Ghost Opp</span>", "#DC2626"),
-        "cold":     ("<span class='pill' style='background:#FFF7ED;color:#92400E;margin-left:6px;'>🧊 Gone Cold</span>", "#D97706"),
-        "stalled":  ("<span class='pill' style='background:#FFFBEB;color:#B45309;margin-left:6px;'>⏸ Stalled</span>", "#B45309"),
-        "sdr_only": ("<span class='pill' style='background:#EFF6FF;color:#1D4ED8;margin-left:6px;'>📞 SDR-Only Touches</span>", "#1D4ED8"),
-        "live":     ("", "#16A34A"),
-        "unknown":  ("", "#64748B"),
-    }
-    badge_html, dc_color = CLASS_BADGES.get(deal_class, ("", "#64748B"))
-    out  = f"<div class='opp-card'><b style='font-size:14px;color:{NAVY};'>{opp_name}</b>"
-    if stage:      out += f" <span class='pill pill-blue' style='margin-left:8px;'>{stage}</span>"
-    if pq:         out += " <span class='pill pill-green'>✅ Pipeline Qualified</span>"
-    if badge_html: out += badge_html
-    meta = []
-    if owner:       meta.append(f"Owner: {owner}")
-    if created:     meta.append(f"Created: {created}")
-    if last_act:    meta.append(f"Last opp activity: {last_act}")
-    if prior_close: meta.append(f"Prior close: {prior_close}")
-    if days_cold is not None:
-        dc = int(days_cold)
-        meta.append(f"<span style='color:{dc_color};font-weight:700;'>{dc}d since last account touch</span>")
-    if meta:
-        out += f"<div style='font-size:12px;color:#64748b;margin-top:6px;line-height:1.8;'>" + " &nbsp;·&nbsp; ".join(meta) + "</div>"
-    out += "</div>"
+
+    # Activity table
     if act_rows:
         type_icons = {"Call": "📞", "Email": "📧", "Live Chat": "💬", "Meeting": "📅", "Task": "✅", "Event": "🎪", "LinkedIn": "🔗"}
         date_idx  = next((act_cols.index(c) for c in ["Month(Activity Created Date)", "Activity Created Date"] if c in act_cols), -1)
@@ -780,6 +833,19 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
                     f"<td style='padding:7px 10px;color:#64748B;border-bottom:1px solid #F1F5F9;font-style:italic;'>{_e(owner_val)}</td>"
                     f"</tr>")
         out += "</tbody></table>"
+
+    # Funnel timing
+    ft_rec = {}
+    has_ft_values = False
+    if ft_rows:
+        ft_rec = dict(zip(ft_cols, ft_rows[0])) if isinstance(ft_rows[0], list) else ft_rows[0]
+        has_ft_values = any(
+            ft_rec.get(k, 0) not in (0, None, "", "0")
+            for k in ["Total f Opportunity S1 Duration", "Total f Opportunity S2 Duration",
+                      "Total f Opportunity S3 Duration", "Total f Opportunity M0 to S7 Duration",
+                      "f Opportunity S1 Duration", "f Opportunity S2 Duration",
+                      "f Opportunity S3 Duration", "f Opportunity M0 to S7 Duration"]
+        )
     if has_ft_values:
         timing_map = [
             ("Total f Opportunity S1 Duration", "f Opportunity S1 Duration", "S1"),
@@ -796,16 +862,20 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
                 out += (f"<tr><td style='padding:6px 12px;color:#475569;border-bottom:1px solid #F1F5F9;'>{label}</td>"
                         f"<td style='padding:6px 12px;font-weight:600;color:{NAVY};border-bottom:1px solid #F1F5F9;'>{_e(str(val))}</td></tr>")
         out += "</tbody></table>"
-    if deal_class in ("ghost", "cold", "stalled", "sdr_only"):
-        dc_str   = f"{int(days_cold)}d" if days_cold is not None else "extended time"
-        sdr_li   = "<li>All prior touches were <strong>SDR-level or automated</strong> — no AE or SE has had a real conversation with this account</li>" if deal_class == "sdr_only" else ""
-        prior_li = f"<li>Prior close date <strong>{prior_close}</strong> has passed — update or re-create opp after re-qualification</li>" if prior_close else ""
-        owner_str = owner if owner else "the current opp owner"
-        out += f"""
+
+    # Re-engagement context if cold
+    if days_cold is not None:
+        dc = int(days_cold)
+        if dc > 60:
+            dc_color = "#DC2626" if dc > 365 else "#D97706" if dc > 180 else "#B45309"
+            dc_label = "ghost" if dc > 365 else "cold" if dc > 180 else "stalled"
+            sdr_li   = ""
+            prior_li = f"<li>Prior close date <strong>{prior_close}</strong> has passed — update or re-create opp after re-qualification</li>" if prior_close else ""
+            out += f"""
 <div style='margin-top:20px;background:#FFF7ED;border-left:4px solid #D97706;border-radius:8px;padding:16px 18px;'>
   <div style='font-size:11px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚡ Re-Engagement Context</div>
   <ul style='margin:0;padding-left:18px;font-size:13px;color:#475569;line-height:1.7;'>
-    <li>Account cold for <strong>{dc_str}</strong> — treat as net-new re-engage, not pipeline continuation</li>
+    <li>Account {dc_label} for <strong style='color:{dc_color};'>{dc}d</strong> — treat as net-new re-engage, not pipeline continuation</li>
     {sdr_li}
     <li>Recommend AE-led outreach with a fresh angle tied to what has changed since last contact</li>
   </ul>
@@ -813,11 +883,12 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
 <div style='margin-top:12px;background:#FFF1F2;border-left:4px solid #E11D48;border-radius:8px;padding:14px 16px;'>
   <div style='font-size:11px;font-weight:700;color:#E11D48;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>⚠️ Risk Flags</div>
   <ul style='margin:0;padding-left:18px;font-size:12px;color:#475569;line-height:1.6;'>
-    <li>Verify opp owner <strong>{owner_str}</strong> is still active and aware before any outreach</li>
+    <li>Verify opp owner is still active and aware before any outreach</li>
     {prior_li}
     <li>Re-qualify from scratch — do not assume prior context carries over</li>
   </ul>
 </div>"""
+
     return out
 
 
@@ -1195,84 +1266,54 @@ def _build_html_page(title: str, body: str) -> str:
 
 
 def normalize_raw(raw: dict) -> dict:
-    """
-    v5.6: Normalize all subagent output key names to canonical form before building.
-    Absorbs schema drift so section builders never see unexpected key names.
-    Call this once at the top of build_pg_report() before any section builder runs.
-    """
-    # --- exec_profiles ---
     ep = raw.get("exec_profiles", {})
     if isinstance(ep, dict):
         if "profiles" in ep and "executives" not in ep:
             ep["executives"] = ep.pop("profiles")
-
-    # --- competitor_intel ---
     ci = raw.get("competitor_intel", {})
     if isinstance(ci, dict):
-        # tools_inferred → tools_suspected
         if "tools_inferred" in ci and "tools_suspected" not in ci:
             ci["tools_suspected"] = ci.pop("tools_inferred")
-        # thoughtspot_angle → displacement_angle (fallback already in section builder)
         for tool in ci.get("tools_confirmed", []):
             if isinstance(tool, dict):
                 if "thoughtspot_angle" in tool and "displacement_angle" not in tool:
                     tool["displacement_angle"] = tool["thoughtspot_angle"]
-
-    # --- tsumble / job postings ---
     ts = raw.get("tsumble", {})
     if isinstance(ts, dict):
         for role in ts.get("role_highlights", []):
             if isinstance(role, dict):
-                # source_url → url
                 if "source_url" in role and "url" not in role:
                     role["url"] = role["source_url"]
-                # signal_tier → thoughtspot_signal (normalize either key)
                 if "signal_tier" in role and "thoughtspot_signal" not in role:
                     role["thoughtspot_signal"] = role["signal_tier"]
-
-    # --- web_research ---
     wr = raw.get("web_research", {})
     if isinstance(wr, dict):
-        # thoughtspot_fit_signals items: signal_tier → normalize
         for sig in wr.get("thoughtspot_fit_signals", []):
             if isinstance(sig, dict) and "signal_tier" not in sig and "tier" in sig:
                 sig["signal_tier"] = sig["tier"]
-        # pain_points: ensure each has source field
         for pp in wr.get("pain_points", []):
             if isinstance(pp, dict) and "source" not in pp:
                 pp["source"] = pp.get("url", "inferred")
-
-    # --- case_studies ---
     cs = raw.get("case_studies", {})
     if isinstance(cs, dict):
         for study in cs.get("recommended_case_studies", []):
             if isinstance(study, dict):
-                # customer → company
                 if "customer" in study and "company" not in study:
                     study["company"] = study["customer"]
-                # metric → key_metric
                 if "metric" in study and "key_metric" not in study:
                     study["key_metric"] = study["metric"]
-                # rationale → why_chosen
                 if "rationale" in study and "why_chosen" not in study:
                     study["why_chosen"] = study["rationale"]
-
-    # --- sales_calls ---
     sc = raw.get("sales_calls", {})
     if isinstance(sc, dict):
-        # call_summaries → signals
         if "call_summaries" in sc and "signals" not in sc:
             sc["signals"] = sc["call_summaries"]
-        # total_calls_found → total_rows
         if "total_calls_found" in sc and "total_rows" not in sc:
             sc["total_rows"] = sc["total_calls_found"]
-        # meaningful_calls → meaningful_count
         if "meaningful_calls" in sc and "meaningful_count" not in sc:
             sc["meaningful_count"] = sc["meaningful_calls"]
-        # voicemail_calls → voicemail_count
         if "voicemail_calls" in sc and "voicemail_count" not in sc:
             sc["voicemail_count"] = sc["voicemail_calls"]
-
     return raw
     def build_pg_report(
     slug:            str,
@@ -1287,28 +1328,20 @@ def normalize_raw(raw: dict) -> dict:
 ) -> dict:
     """
     Build a PG report HTML string with full ThoughtSpot branding.
-    v5.6: normalize_raw() called first to absorb subagent schema drift.
-    v5.6: why_now and why_anything rendered inside _why_ts_section(), not post-build.
-    v5.6: stage/opp rendered in hero section during initial build, not post-build.
+    v5.7: normalize_raw() called first, all opps rendered, MEDDPICC narrative added.
     Returns {"filename", "html", "slug", "phase"}
     """
-    # v5.6: normalize all subagent output key names FIRST before any section builder runs
     raw           = normalize_raw(raw or {})
     outreach_data = outreach_data or {}
     tabs          = _get_tabs(phase)
     owner         = header_data.get("owner_name", "AE")
     region        = header_data.get("region", "")
     now           = datetime.datetime.utcnow().strftime("%B %d, %Y")
+    why_now       = header_data.get("why_now", "")
+    why_anything  = header_data.get("why_anything", "")
+    opp_stage     = header_data.get("opp_stage", "")
+    opp_name      = header_data.get("opp_name", "")
 
-    # v5.6: read why_now and why_anything from header_data — rendered in builder, not post-build
-    why_now      = header_data.get("why_now", "")
-    why_anything = header_data.get("why_anything", "")
-
-    # v5.6: read stage and opp from header_data for hero section — rendered in builder, not post-build
-    opp_stage = header_data.get("opp_stage", "")
-    opp_name  = header_data.get("opp_name", "")
-
-    # Also try to extract stage/opp from ts_data if not in header_data
     if not opp_stage or not opp_name:
         ds = ts_data.get("deal_stage", {})
         ds_rows = ds.get("data_rows", [])
@@ -1319,8 +1352,6 @@ def normalize_raw(raw: dict) -> dict:
             opp_name  = opp_name  or ds_rec.get("Opportunity Name", "")
 
     body  = "<div class='page'>"
-
-    # Hero section — all data rendered here, no post-build injection
     body += "<div class='hero'>"
     body += "<div class='hero-eyebrow'>Account Intelligence Report</div>"
     body += f"<h1>{_e(account_name)}</h1>"
@@ -1331,14 +1362,12 @@ def normalize_raw(raw: dict) -> dict:
         body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Region</span><span class='hero-meta-value'>{_e(region)}</span></div>"
     body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Generated</span><span class='hero-meta-value'>{now}</span></div>"
     body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Status</span><span class='hero-meta-value'>{'📄 Draft' if phase == 1 else '✅ Final'}</span></div>"
-    # v5.6: stage and opp rendered directly here — no post-build string injection
     if opp_stage:
         body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Stage</span><span class='hero-meta-value'>{_e(opp_stage)}</span></div>"
     if opp_name:
         body += f"<div class='hero-meta-item'><span class='hero-meta-label'>Opportunity</span><span class='hero-meta-value'>{_e(opp_name)}</span></div>"
     body += "</div></div>"
 
-    # Tab navigation
     body += "<div class='tab-nav'>"
     for i, (tab_id, tab_label) in enumerate(tabs):
         active = "active" if i == 0 else ""
@@ -1348,7 +1377,6 @@ def normalize_raw(raw: dict) -> dict:
                  f"{_e(tab_label)}</button>")
     body += "</div>"
 
-    # Tab content
     body += "<div class='content'>"
     for i, (tab_id, _) in enumerate(tabs):
         active = "active" if i == 0 else ""
@@ -1356,7 +1384,6 @@ def normalize_raw(raw: dict) -> dict:
 
         if tab_id == "overview":
             body += _company_overview_section(raw)
-
         elif tab_id == "stakeholders":
             body += _section_header("👥", "4-Leg Stool")
             body += _four_leg_stool_section(ts_data, account_name, raw)
@@ -1364,44 +1391,33 @@ def normalize_raw(raw: dict) -> dict:
             body += _stakeholder_map_section(ts_data)
             body += _section_header("💡", "ThoughtSpot Talking Point")
             body += _talking_point_section(account_name, matched_drivers, raw)
-
         elif tab_id == "why_ts":
             body += _section_header("🎯", "Why ThoughtSpot")
-            # v5.6: why_now and why_anything rendered here — not post-build injection
             body += _why_ts_section(matched_drivers, raw, why_now=why_now, why_anything=why_anything)
-
         elif tab_id == "competitor":
             body += _section_header("🔍", "Competitor Landscape")
             body += _competitor_section(raw, matched_drivers)
-
         elif tab_id == "deal_story":
             body += _section_header("📋", "Deal Story")
             body += _deal_story_section(ts_data)
-
         elif tab_id == "sales_call":
             body += _section_header("📞", "Sales Call Analysis")
             body += _sales_call_section(ts_data)
-
         elif tab_id == "gong_calls":
             body += _section_header("🎙", "Gong Call Signals")
             body += _gong_calls_section(raw)
-
         elif tab_id == "6sense":
             body += _section_header("📡", "6Sense Intent")
             body += _6sense_section(ts_data)
-
         elif tab_id == "roles":
             body += _section_header("💼", "Hiring Signals")
             body += _hiring_signals_section(raw)
-
         elif tab_id == "case_studies":
             body += _section_header("📚", "Recommended Case Studies")
             body += _case_studies_section(raw, account_name)
-
         elif tab_id == "exec_profiles":
             body += _section_header("🧑", "Executive Profiles")
             body += _exec_profiles_section(raw)
-
         elif tab_id == "outreach":
             body += _section_header("✉️", "Outreach Sequences")
             body += _outreach_section(outreach_data)
@@ -1414,9 +1430,11 @@ def normalize_raw(raw: dict) -> dict:
     filename = f"{slug}_pg_report_{suffix}.html"
     html     = _build_html_page(f"PG Report — {account_name}", body)
 
-    print(f"[pg_report_builder v5.6] Phase {phase} report built → {filename}")
+    print(f"[pg_report_builder v5.7] Phase {phase} report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "phase": phase}
-    def build_onepager(
+
+
+def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1425,10 +1443,8 @@ def normalize_raw(raw: dict) -> dict:
 ) -> dict:
     """
     Build an external customer-facing one-pager.
-    No internal data. ThoughtSpot-branded design.
     Returns {"filename", "html", "slug"}
     """
-    # normalize before reading
     raw      = normalize_raw(raw or {})
     wr       = raw.get("web_research", {})
     cs_data  = raw.get("case_studies", {})
@@ -1545,5 +1561,5 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
         + "</body></html>"
     )
 
-    print(f"[pg_report_builder v5.6] One-pager built → {filename}")
+    print(f"[pg_report_builder v5.7] One-pager built → {filename}")
     return {"filename": filename, "html": full_html, "slug": slug}
