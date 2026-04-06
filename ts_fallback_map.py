@@ -112,6 +112,42 @@ INTENT_MAP = {
 # ---------------------------------------------------------------------------
 # Internal query engine
 # ---------------------------------------------------------------------------
+def extract_contacts_from_activities(ts_data: dict) -> list:
+    """
+    Parse contact names out of Gong/Outreach activity subject lines.
+    Returns list of dicts: {name, source}
+    Used to cross-reference exec profiles and set in_sfdc=True on name matches.
+    """
+    import re
+    contacts = []
+    seen = set()
+
+    act = ts_data.get("sfdc_contacts", ts_data.get("activity_history", {}))
+    cols = act.get("column_names", [])
+    rows = act.get("data_rows", [])
+
+    for row in rows:
+        r = dict(zip(cols, row)) if isinstance(row, list) else row
+        subject = r.get("Activity Subject", "")
+
+        # "[Gong Outbound]: Call with {Account} - {Contact Name} - No Answer"
+        m = re.search(r'Call with [^-]+ - ([A-Z][a-z]+ [A-Z][a-zA-Z\s]+?) - ', subject)
+        if m:
+            name = m.group(1).strip()
+            if name and name not in seen:
+                seen.add(name)
+                contacts.append({"name": name, "source": "gong_activity"})
+            continue
+
+        # "[Outreach] ... Outbound call to {Full Name}, ..."
+        m2 = re.search(r'[Oo]utbound call to ([A-Z][a-z]+ [A-Z][a-zA-Z\s]+?)(?:,|\s*$)', subject)
+        if m2:
+            name = m2.group(1).strip().split(',')[0].strip()
+            if name and name not in seen:
+                seen.add(name)
+                contacts.append({"name": name, "source": "outreach_activity"})
+
+    return contacts
 
 def _ts_query(query_string: str, worksheet_key: str, timeout: int = 20) -> dict:
     token    = os.environ.get("THOUGHTSPOT_TOKEN", "")
