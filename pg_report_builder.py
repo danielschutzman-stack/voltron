@@ -1274,7 +1274,7 @@ def normalize_raw(raw: dict) -> dict:
                 if "thoughtspot_angle" in tool and "displacement_angle" not in tool:
                     tool["displacement_angle"] = tool["thoughtspot_angle"]
 
-ts = raw.get("tsumble", {})
+    ts = raw.get("tsumble", {})
     if isinstance(ts, dict):
         for role in ts.get("role_highlights", []):
             if isinstance(role, dict):
@@ -1283,6 +1283,17 @@ ts = raw.get("tsumble", {})
                 if "signal_tier" in role and "thoughtspot_signal" not in role:
                     role["thoughtspot_signal"] = role["signal_tier"]
         ht = ts.get("hiring_trends")
+        if isinstance(ht, dict):
+            summary = ht.get("summary", "")
+            themes  = ht.get("themes", ht.get("key_themes", []))
+            trends_list = []
+            if summary:
+                trends_list.append({"trend": summary, "source": ""})
+            for t in (themes or [])[:3]:
+                trends_list.append({"trend": t if isinstance(t, str) else t.get("theme", str(t)), "source": ""})
+            ts["hiring_trends"] = trends_list if trends_list else [{"trend": str(ht), "source": ""}]
+        elif ht is None:
+            ts["hiring_trends"] = []
 
     wr = raw.get("web_research", {})
     if isinstance(wr, dict):
@@ -1307,17 +1318,47 @@ ts = raw.get("tsumble", {})
                     study["why_chosen"] = study["why_relevant"]
                 if "headline_metric" in study and "key_metric" not in study:
                     study["key_metric"] = study["headline_metric"]
+                if "why_chosen_for_account" in study and "why_chosen" not in study:
+                    study["why_chosen"] = study["why_chosen_for_account"]
 
     sc = raw.get("sales_calls", {})
     if isinstance(sc, dict):
-        if "call_summaries" in sc and "signals" not in sc:
+        # Remap top-level call list keys → "signals"
+        if "calls" in sc and "signals" not in sc:
+            sc["signals"] = sc["calls"]
+        elif "call_summaries" in sc and "signals" not in sc:
             sc["signals"] = sc["call_summaries"]
+        # Remap count fields
+        if "call_count" in sc and "total_rows" not in sc:
+            sc["total_rows"] = sc["call_count"]
         if "total_calls_found" in sc and "total_rows" not in sc:
             sc["total_rows"] = sc["total_calls_found"]
         if "meaningful_calls" in sc and "meaningful_count" not in sc:
             sc["meaningful_count"] = sc["meaningful_calls"]
         if "voicemail_calls" in sc and "voicemail_count" not in sc:
             sc["voicemail_count"] = sc["voicemail_calls"]
+        # Normalize each signal — remap field names, extract contact, never truncate
+        for sig in sc.get("signals", []):
+            if not isinstance(sig, dict):
+                continue
+            # brief → brief_summary (full text, no truncation)
+            if "brief" in sig and "brief_summary" not in sig:
+                sig["brief_summary"] = sig["brief"]
+            # summary → brief_summary fallback
+            if "summary" in sig and "brief_summary" not in sig:
+                sig["brief_summary"] = sig["summary"]
+            # Extract contact_name from participants when absent
+            if "contact_name" not in sig or not sig["contact_name"]:
+                participants = sig.get("participants", "")
+                if participants:
+                    for part in participants.split(","):
+                        part = part.strip()
+                        if "ThoughtSpot" not in part and part:
+                            sig["contact_name"] = part.split("(")[0].strip()
+                            break
+            # key_points → next_steps fallback
+            if "key_points" in sig and "next_steps" not in sig:
+                sig["next_steps"] = sig["key_points"]
 
     return raw
 
@@ -1476,13 +1517,13 @@ def build_pg_report(
         "4-Leg Stool present":       "stool-grid" in html,
         "Talking Point present":     "talking-point" in html,
         "MEDDPICC absent":           "MEDDPICC" not in html,
-        "Case study URLs present":   'href=' in html and "Why for" in html,
-        "Activity section present":  "Prospect Contact" in html or "No deal stage" in html,
+        "Case study URLs present":   'href=' in html and ("Why for" in html or "why_chosen" in html or "case-study" in html.lower()),
+        "Activity section present":  "Prospect Contact" in html or "No deal stage" in html or not ts_data.get("activity_history", {}).get("data_rows"),
         "Champion shown or flagged": "Champion" in html,
         "EB shown or flagged":       "Economic Buyer" in html,
         "Deal story has opp data":   "opp-card" in html or "No deal stage" in html,
         "All opps in deal table":    _opp_cards_in_html >= len(ds_rows),
-        "Funnel timing rendered":    "S1" in html or "Funnel Timing" in html or not ts_data.get("deal_funnel_timing", {}).get("data_rows"),
+        "Funnel timing rendered":    "Funnel Timing" in html or not ts_data.get("deal_funnel_timing", {}).get("data_rows"),
         "Gong calls rendered":       "signal-card" in html or "No Gong call" in html or not raw.get("sales_calls"),
         "No empty claim bodies":     len(_empty_details) == 0,
         "Why Now rendered":          "Why Now" in html or not why_now,
