@@ -47,11 +47,11 @@ INTENT_MAP = {
         "studio",
         "[Account Name] [Account Segment] [Account Rev Score - TSA] [Account Rev Score - TSE] [Account Clearbit Industry Group] [Account Owner Name] = '{owner_name}'"
     ),
-    "6sense_intent": (
+     "6sense_intent": (
         "revops",
-        "[Account Name] [Account Snapshot 6S Reach Score] [Person 6S Intent Score] [Account Owner Name] [Account Owner Name] = '{owner_name}'",
+        "[Account Name] [Person 6S Intent Score] [Account Owner Name] [Account Owner Name] = '{owner_name}'",
         "revops",
-        "[Account Name] [Account Snapshot 6S Reach Score] [Account Owner Name] [Account Owner Name] = '{owner_name}'"
+        "[Account Name] [Person 6S Intent Score] [Account Owner Name] = '{owner_name}'"
     ),
     "last_activity": (
         "revops",
