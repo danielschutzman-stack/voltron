@@ -1274,7 +1274,7 @@ def normalize_raw(raw: dict) -> dict:
                 if "thoughtspot_angle" in tool and "displacement_angle" not in tool:
                     tool["displacement_angle"] = tool["thoughtspot_angle"]
 
-    ts = raw.get("tsumble", {})
+ts = raw.get("tsumble", {})
     if isinstance(ts, dict):
         for role in ts.get("role_highlights", []):
             if isinstance(role, dict):
@@ -1282,6 +1282,7 @@ def normalize_raw(raw: dict) -> dict:
                     role["url"] = role["source_url"]
                 if "signal_tier" in role and "thoughtspot_signal" not in role:
                     role["thoughtspot_signal"] = role["signal_tier"]
+        ht = ts.get("hiring_trends")
 
     wr = raw.get("web_research", {})
     if isinstance(wr, dict):
@@ -1302,6 +1303,10 @@ def normalize_raw(raw: dict) -> dict:
                     study["key_metric"] = study["metric"]
                 if "rationale" in study and "why_chosen" not in study:
                     study["why_chosen"] = study["rationale"]
+                if "why_relevant" in study and "why_chosen" not in study:
+                    study["why_chosen"] = study["why_relevant"]
+                if "headline_metric" in study and "key_metric" not in study:
+                    study["key_metric"] = study["headline_metric"]
 
     sc = raw.get("sales_calls", {})
     if isinstance(sc, dict):
