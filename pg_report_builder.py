@@ -133,10 +133,21 @@ def _classify_leg(title: str) -> str:
 def _score_to_grade(score) -> str:
     try:
         n = float(score)
-        if n >= 90: return "A+"
-        if n >= 75: return "A"
-        if n >= 60: return "B"
-        return "C"
+        # 6Sense Total Person Intent Score range: 0–500+
+        # ICP score range: 0–125
+        # Disambiguate by magnitude: > 125 = 6Sense intent sum
+        if n > 125:
+            # 6Sense intent score
+            if n >= 200: return "A+"
+            if n >= 100: return "A"
+            if n >= 50:  return "B"
+            return "C"
+        else:
+            # ICP score (TSA / TSE)
+            if n >= 90: return "A+"
+            if n >= 75: return "A"
+            if n >= 60: return "B"
+            return "C"
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
@@ -997,8 +1008,13 @@ def _6sense_section(ts_data: dict) -> str:
     out = "<table><thead><tr><th>Account</th><th>Intent Grade</th><th>Reach Grade</th></tr></thead><tbody>"
     for row in rows[:10]:
         rec = dict(zip(cols, row)) if isinstance(row, list) else row
-        intent_grade = _score_to_grade(rec.get("Person 6S Intent Score", ""))
-        reach_grade  = _score_to_grade(rec.get("Account Snapshot 6S Reach Score", ""))
+        intent_score = (rec.get("Person 6S Intent Score")
+                        or rec.get("Total Person 6S Intent Score")
+                        or "")
+        intent_grade = _score_to_grade(intent_score)
+        reach_raw    = rec.get("Account Snapshot 6S Reach Score", "")
+        reach_grade  = reach_raw if reach_raw else "N/A"  # already High/Med/Low string
+
         grade_color  = "#16A34A" if "A" in intent_grade else "#D97706" if intent_grade == "B" else "#94A3B8"
         out += (f"<tr><td>{_e(rec.get('Account Name', ''))}</td>"
                 f"<td><span style='color:{grade_color};font-weight:700;font-size:16px;'>{_e(intent_grade)}</span></td>"
