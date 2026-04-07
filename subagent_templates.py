@@ -500,6 +500,19 @@ SFDC Context: {sfdc_context}
 Intent Signals: {intent_context}
 Matched Value Drivers: {value_drivers}
 
+⚠️ CRITICAL SAVE RULE — non-negotiable:
+Save each output file IMMEDIATELY after completing that module.
+Do NOT collect all modules and write at the end.
+For every module:
+  1. Run searches for this module
+  2. Synthesize results
+  3. Write JSON to the output file RIGHT NOW
+  4. Print "✅ {module} saved ({file_size} bytes)"
+  5. Only then move to the next module
+
+If time runs out mid-run, every completed module is already on disk.
+The parent agent detects which files exist and builds from whatever is present.
+NEVER batch writes. NEVER collect everything then save at the end.
 Output Files
 Check if each file exists before running — skip if already present.
   /sandbox/{slug}_web_research.json   ← Module 1
@@ -584,6 +597,19 @@ SFDC Context: {sfdc_context}
 Matched Value Drivers: {value_drivers}
 Pain Signals from Fast Sweep: {pain_signals}
 
+⚠️ CRITICAL SAVE RULE — non-negotiable:
+Save each output file IMMEDIATELY after completing that module.
+Do NOT collect all modules and write at the end.
+For every module:
+  1. Run searches for this module
+  2. Synthesize results
+  3. Write JSON to the output file RIGHT NOW
+  4. Print "✅ {module} saved ({file_size} bytes)"
+  5. Only then move to the next module
+
+If time runs out mid-run, every completed module is already on disk.
+The parent agent detects which files exist and builds from whatever is present.
+NEVER batch writes. NEVER collect everything then save at the end.
 Output Files
 Check if each file exists before running — skip if already present.
   /sandbox/{slug}_competitor_intel.json  ← Module 1
@@ -671,6 +697,19 @@ Matched Value Drivers: {value_drivers}
 
 {_TS_SIGNAL_GLOSSARY}
 
+⚠️ CRITICAL SAVE RULE — non-negotiable:
+Save each output file IMMEDIATELY after completing that module.
+Do NOT collect all modules and write at the end.
+For every module:
+  1. Run searches for this module
+  2. Synthesize results
+  3. Write JSON to the output file RIGHT NOW
+  4. Print "✅ {module} saved ({file_size} bytes)"
+  5. Only then move to the next module
+
+If time runs out mid-run, every completed module is already on disk.
+The parent agent detects which files exist and builds from whatever is present.
+NEVER batch writes. NEVER collect everything then save at the end.
 Output Files
 Save SEPARATE JSON files for each module. Check if each file already exists
 before running that module — if it exists, skip that module (safe for re-runs).
