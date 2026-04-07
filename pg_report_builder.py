@@ -815,7 +815,7 @@ def _deal_story_section(ts_data: dict) -> str:
             atype_raw  = str(row[type_idx])               if type_idx  >= 0 and len(row) > type_idx  else ""
             subj_raw   = str(row[subj_idx])               if subj_idx  >= 0 and len(row) > subj_idx  else ""
             owner_val  = str(row[owner_idx])              if owner_idx >= 0 and len(row) > owner_idx else ""
-            subj_clean = _re.sub(r'\[Outreach\]\s*|\[\w+\]\s*', "", subj_raw).strip()
+            subj_clean = _re.sub(r'\[Gong Templates\]\s*|\[Outreach\]\s*|\[\w+\]\s*', "", subj_raw).strip()
             prospect   = "Unknown Contact"
             nm = _re.search(r'(?:Call|Email|to|for)\s+([A-Z][a-z]+ [A-Z][a-z]+)', subj_raw)
             if nm: prospect = nm.group(1)
@@ -1157,9 +1157,9 @@ def _normalize_outreach(outreach_data: dict) -> dict:
 
 def _outreach_section(outreach_data: dict) -> str:
     outreach_data = _normalize_outreach(outreach_data)
-    if not outreach_data: return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
+    if not outreach_data: return "<p style='color:#94A3B8;'>Gong Templates not yet generated.</p>"
     sequences = outreach_data.get("sequences", [])
-    if not sequences: return "<p style='color:#94A3B8;'>No outreach sequences available.</p>"
+    if not sequences: return "<p style='color:#94A3B8;'>No Gong Templates available.</p>"
     out = ""
     for seq in sequences:
         if not isinstance(seq, dict): continue
@@ -1213,7 +1213,7 @@ def _get_tabs() -> list:
         ("roles",         "💼 Hiring"),
         ("case_studies",  "📚 Case Studies"),
         ("exec_profiles", "🧑 Exec Profiles"),
-        ("outreach",      "✉️ Outreach"),
+        ("outreach",      "✉️ Gong Templates"),
     ]
 
 def _build_html_page(title: str, body: str) -> str:
@@ -1342,7 +1342,7 @@ def build_pg_report(
     output_dir:      str  = "/sandbox",
 ) -> dict:
     """
-    v5.8: Single-phase delivery — always includes outreach if available.
+    v5.8: Single-phase delivery — always includes Gong Templates if available.
     Verification logs gaps in report header but never crashes session.
     Returns {"filename", "html", "slug", "data_gaps"}
     """
@@ -1463,11 +1463,11 @@ def build_pg_report(
             body += _exec_profiles_section(raw)
 
         elif tab_id == "outreach":
-            body += _section_header("✉️", "Outreach Sequences")
+            body += _section_header("✉️", "Gong Templates")
             if outreach_data:
                 body += _outreach_section(outreach_data)
             else:
-                body += "<p style='color:#94A3B8;'>Outreach sequences generating — check back shortly.</p>"
+                body += "<p style='color:#94A3B8;'>Gong Templates generating — check back shortly.</p>"
 
         body += "</div>"
 
