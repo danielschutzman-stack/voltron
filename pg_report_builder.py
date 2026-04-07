@@ -87,11 +87,9 @@ BUILDER_SCHEMA = {
     },
 }
 
-
 def _e(v) -> str:
     if v is None: return ""
     return _html.escape(str(v))
-
 
 def _text(v, fallback: str = "") -> str:
     if v is None: return fallback
@@ -105,7 +103,6 @@ def _text(v, fallback: str = "") -> str:
         return "; ".join(parts) or fallback
     return str(v) or fallback
 
-
 def _src_badge(v) -> str:
     if not isinstance(v, dict): return ""
     src      = v.get("source") or v.get("source_url") or v.get("url") or ""
@@ -116,11 +113,9 @@ def _src_badge(v) -> str:
         return f" <a href='{_e(src)}' target='_blank' style='color:#94A3B8;font-size:10px;text-decoration:none;'>↗ {label}</a>"
     return f" <span style='color:#94A3B8;font-size:10px;'>· {_e(src)}</span>"
 
-
 def _render_item(v) -> str:
     if isinstance(v, dict): return _e(_text(v)) + _src_badge(v)
     return _e(str(v)) if v else ""
-
 
 def _classify_leg(title: str) -> str:
     if not title: return "UNKNOWN"
@@ -128,7 +123,6 @@ def _classify_leg(title: str) -> str:
     for leg, keywords in LEG_RULES:
         if any(kw in t for kw in keywords): return leg
     return "UNKNOWN"
-
 
 def _score_to_grade(score) -> str:
     try:
@@ -151,7 +145,6 @@ def _score_to_grade(score) -> str:
     except (TypeError, ValueError):
         return str(score) if score else "N/A"
 
-
 def _decode_ts_date(val, fmt="%b %Y") -> str:
     from datetime import datetime
     if isinstance(val, dict):
@@ -161,7 +154,6 @@ def _decode_ts_date(val, fmt="%b %Y") -> str:
             except Exception: return str(inner)
     if val is None or val == "": return ""
     return str(val)
-
 
 def _classify_deal(days_cold, activity_rows, cols) -> str:
     if days_cold is None: return "unknown"
@@ -178,7 +170,6 @@ def _classify_deal(days_cold, activity_rows, cols) -> str:
     if dc > 180: return "cold"
     if dc > 60:  return "stalled"
     return "live"
-
 
 _CSS = f"""
 <style>
@@ -281,15 +272,12 @@ function showTab(slug, tabId) {
 </script>
 """
 
-
 def _section_header(icon: str, title: str) -> str:
     return f"<div class='section-header'><div class='section-icon'>{icon}</div><h2 class='section-title'>{_e(title)}</h2></div>"
-
 
 def _card(content: str, highlight: bool = False) -> str:
     cls = "card-highlight" if highlight else "card"
     return f"<div class='{cls}'>{content}</div>"
-
 
 def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
     out = f"<div class='signal-card'><div class='signal-card-title'>{title}</div>"
@@ -298,7 +286,6 @@ def _signal_card(title: str, meta: str = "", bullets: list = None) -> str:
         for b in bullets: out += f"<div class='money-row'><span>{b}</span></div>"
     out += "</div>"
     return out
-
 
 def _company_overview_section(raw: dict) -> str:
     wr   = raw.get("web_research", {})
@@ -327,7 +314,6 @@ def _company_overview_section(raw: dict) -> str:
             else:
                 out += f"<div class='card' style='padding:12px 16px;margin-bottom:8px;'>{_e(str(n))}</div>"
     return out or _section_header("🏢", "Company Overview") + "<p style='color:#94A3B8;'>No company data available.</p>"
-
 
 def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) -> str:
     """
@@ -419,11 +405,11 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
                     if contact["is_champion"]: out += " <span class='badge badge-champion'>🏆 Champion</span>"
                     if contact["is_eb"]:       out += " <span class='badge badge-eb'>💰 EB</span>"
                     if not contact.get("in_sfdc") and contact.get("source") in ("linkedin", "web"):
-                        out += " <span class='badge badge-researched'>🔍 Not in SFDC</span>"
+                        out += " <span class='badge badge-researched' title='Not found in recent SFDC activity data. A Salesforce record may still exist — verify before outreach.'>🔍 Not in activity</span>"
                     out += "</div>"
                     if contact["title"]: out += f"<div class='stool-person-title'>{_e(contact['title'])}</div>"
                     if not contact.get("in_sfdc"):
-                        src_label = "Gong" if contact.get("source") == "gong" else "LinkedIn/Web — add to SFDC"
+                        src_label = "Gong" if contact.get("source") == "gong" else "LinkedIn/Web — not in recent SFDC activity"
                         out += f"<div class='stool-person-source'>Source: {src_label}</div>"
                     out += "</div>"
             out += "</div>"
@@ -432,7 +418,6 @@ def _four_leg_stool_section(ts_data: dict, account_name: str, raw: dict = None) 
     if legs["UNKNOWN"]:
         out += "<p style='font-size:11px;color:#94A3B8;margin-top:8px;'>⚠️ Unclassified (title not matched): " + ", ".join(_e(s["name"]) for s in legs["UNKNOWN"]) + "</p>"
     return out
-
 
 def _stakeholder_map_section(ts_data: dict) -> str:
     sfdc      = ts_data.get("sfdc_stakeholder", {})
@@ -490,7 +475,6 @@ def _stakeholder_map_section(ts_data: dict) -> str:
     out += "</tbody></table>" + crossref
     return out
 
-
 def _render_claim_annotations(annotations: list) -> str:
     if not annotations: return ""
     normalized = []
@@ -541,7 +525,6 @@ def _render_claim_annotations(annotations: list) -> str:
     out += "</div></details>"
     return out
 
-
 def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) -> str:
     if not matched_drivers:
         return "<div class='card'><p class='flag' style='margin:0;'>⚠️ No matched drivers — select manually.</p></div>"
@@ -587,7 +570,6 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
         out += _render_claim_annotations(citations)
     return out
 
-
 def _why_ts_section(matched_drivers: list, raw: dict, why_now: str = "", why_anything: str = "") -> str:
     out = ""
     if why_now and why_now.strip():
@@ -619,7 +601,6 @@ def _why_ts_section(matched_drivers: list, raw: dict, why_now: str = "", why_any
         out += _signal_card(_e(label), meta, bullets)
     return out
 
-
 def _hiring_signals_section(raw: dict) -> str:
     t     = raw.get("tsumble", {})
     roles = t.get("role_highlights", [])
@@ -648,7 +629,6 @@ def _hiring_signals_section(raw: dict) -> str:
             out += f"<tr><td colspan='5'>{_e(str(r))}</td></tr>"
     out += "</tbody></table>"
     return out
-
 
 def _competitor_section(raw: dict, matched_drivers: list) -> str:
     ci        = raw.get("competitor_intel", {})
@@ -683,7 +663,7 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
         out += "</ul>"
     if disp_sum: out += _card(f"<p style='margin:0;font-size:13px;'><b>Summary:</b> {_e(str(disp_sum))}</p>")
     return out
-    def _build_deal_narrative(ts_data: dict) -> str:
+def _build_deal_narrative(ts_data: dict) -> str:
     """
     v5.8: Always renders — threshold lowered to 1 Gong field.
     Returns narrative HTML from richest MEDDPICC row.
@@ -744,7 +724,6 @@ def _competitor_section(raw: dict, matched_drivers: list) -> str:
 
     out += "</div>"
     return out if rendered_any else ""
-
 
 def _deal_story_section(ts_data: dict) -> str:
     import re as _re
@@ -909,7 +888,6 @@ def _deal_story_section(ts_data: dict) -> str:
 </div>"""
     return out
 
-
 def _sales_call_section(ts_data: dict) -> str:
     flags     = ts_data.get("meddpicc_flags", {})
     detail    = ts_data.get("meddpicc_detail", {})
@@ -945,7 +923,6 @@ def _sales_call_section(ts_data: dict) -> str:
         out += f"<tr><td><b>{_e(label)}</b></td><td>{v_display}</td><td>{d_display}</td></tr>"
     out += "</tbody></table>"
     return out
-
 
 def _gong_calls_section(raw: dict) -> str:
     calls = raw.get("sales_calls", {})
@@ -1000,7 +977,6 @@ def _gong_calls_section(raw: dict) -> str:
         out += "</tbody></table>"
     return out
 
-
 def _6sense_section(ts_data: dict) -> str:
     rows = ts_data.get("6sense_intent", {}).get("data_rows", [])
     cols = ts_data.get("6sense_intent", {}).get("column_names", [])
@@ -1022,7 +998,6 @@ def _6sense_section(ts_data: dict) -> str:
     out += "</tbody></table>"
     return out
 
-
 def _case_studies_section(raw: dict, account_name: str) -> str:
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
     if not studies: return "<p style='color:#94A3B8;'>No case studies matched.</p>"
@@ -1043,7 +1018,6 @@ def _case_studies_section(raw: dict, account_name: str) -> str:
         out += "</div>"
     out += "</div>"
     return out
-
 
 def _exec_profiles_section(raw: dict) -> str:
     _ep = raw.get("exec_profiles", {})
@@ -1067,12 +1041,12 @@ def _exec_profiles_section(raw: dict) -> str:
         out += (f"<div style='display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;'>"
                 f"<div><div style='font-weight:700;font-size:15px;color:{NAVY};'>{name}")
         if not in_sfdc:
-            out += " <span class='badge badge-researched'>🔍 Not in SFDC</span>"
+            out += " <span class='badge badge-researched' title='Not found in recent SFDC activity data. A Salesforce record may still exist — verify before outreach.'>🔍 Not in activity</span>"
         out += "</div>"
         if title: out += f"<div style='font-size:12px;color:#64748b;margin-top:2px;'>{title}</div>"
         if not in_sfdc:
             src_label = "LinkedIn" if li_url else (src_type or "Web research")
-            out += f"<div style='font-size:10px;color:#D97706;margin-top:2px;'>Source: {_e(src_label)} — add to SFDC</div>"
+            out += f"<div style='font-size:10px;color:#D97706;margin-top:2px;'>Source: {_e(src_label)} — not in recent SFDC activity; record may exist</div>"
         out += "</div>"
         if li_url: out += f"<a href='{_e(li_url)}' target='_blank' style='color:{BLUE};font-size:11px;font-weight:600;flex-shrink:0;'>LinkedIn ↗</a>"
         out += "</div>"
@@ -1097,7 +1071,6 @@ def _exec_profiles_section(raw: dict) -> str:
                         out += "</blockquote>"
         out += "</div>"
     return out
-
 
 def _normalize_outreach(outreach_data: dict) -> dict:
     if not outreach_data: return {}
@@ -1182,7 +1155,6 @@ def _normalize_outreach(outreach_data: dict) -> dict:
         return {"sequences": [{"contact_name": "", "contact_title": "", "emails": emails, "linkedin_messages": li_msgs}]}
     return outreach_data
 
-
 def _outreach_section(outreach_data: dict) -> str:
     outreach_data = _normalize_outreach(outreach_data)
     if not outreach_data: return "<p style='color:#94A3B8;'>Outreach sequences not yet generated.</p>"
@@ -1228,7 +1200,7 @@ def _outreach_section(outreach_data: dict) -> str:
                     out += f"<pre style='background:#f8faff;border-radius:8px;padding:14px;font-size:12px;'>{_e(str(msg))}</pre>"
         out += "</div>"
     return out
-    def _get_tabs() -> list:
+def _get_tabs() -> list:
     return [
         ("overview",      "🏢 Overview"),
         ("stakeholders",  "👥 Stakeholders"),
@@ -1244,7 +1216,6 @@ def _outreach_section(outreach_data: dict) -> str:
         ("outreach",      "✉️ Outreach"),
     ]
 
-
 def _build_html_page(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head>"
@@ -1253,7 +1224,6 @@ def _build_html_page(title: str, body: str) -> str:
         f"<title>{_e(title)}</title>"
         + _CSS + "</head><body>" + body + _JS + "</body></html>"
     )
-
 
 def normalize_raw(raw: dict) -> dict:
     """
@@ -1337,7 +1307,6 @@ def normalize_raw(raw: dict) -> dict:
             sc["meaningful_count"] = sc["meaningful_calls"]
         if "voicemail_calls" in sc and "voicemail_count" not in sc:
             sc["voicemail_count"] = sc["voicemail_calls"]
-        # Normalize each signal — remap field names, extract contact, never truncate
         for sig in sc.get("signals", []):
             if not isinstance(sig, dict):
                 continue
@@ -1361,7 +1330,6 @@ def normalize_raw(raw: dict) -> dict:
                 sig["next_steps"] = sig["key_points"]
 
     return raw
-
 
 def build_pg_report(
     slug:            str,
@@ -1552,7 +1520,7 @@ def build_pg_report(
     filename = f"{slug}_pg_report.html"
     print(f"[pg_report_builder v5.8] Report built → {filename}")
     return {"filename": filename, "html": html, "slug": slug, "data_gaps": failed}
-    def build_onepager(
+def build_onepager(
     slug:            str,
     account_name:    str,
     raw:             dict,
@@ -1577,7 +1545,6 @@ def build_pg_report(
     else:
         desc = ""
 
-    # Extract pain points — always get text field, never raw dict
     pain_pts = []
     for p in wr.get("pain_points", []):
         pt = _text(p)
