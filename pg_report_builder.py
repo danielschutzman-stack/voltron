@@ -570,14 +570,18 @@ def _talking_point_section(account_name: str, matched_drivers: list, raw: dict) 
         out += _render_claim_annotations(citations)
     return out
 
-def _why_ts_section(matched_drivers: list, raw: dict, why_now: str = "", why_anything: str = "") -> str:
+def _why_ts_section(matched_drivers: list, raw: dict, why_now: str = "", why_anything: str = "", why_thoughtspot: str = "") -> str:
     out = ""
     if why_now and why_now.strip():
         out += (f"<div class='why-box'><div class='why-box-label'>⚡ Why Now</div><p>{_e(why_now)}</p></div>")
     if why_anything and why_anything.strip():
-        out += (f"<div class='why-box' style='border-left-color:#16A34A;background:#F0FDF4;border-color:#86EFAC;'>"
-                f"<div class='why-box-label' style='color:#16A34A;'>🎯 Why ThoughtSpot</div>"
+        out += (f"<div class='why-box' style='border-left-color:#D97706;background:#FFFBEB;border-color:#FCD34D;'>"
+                f"<div class='why-box-label' style='color:#D97706;'>🎯 Why Anything</div>"
                 f"<p>{_e(why_anything)}</p></div>")
+    if why_thoughtspot and why_thoughtspot.strip():
+        out += (f"<div class='why-box' style='border-left-color:#16A34A;background:#F0FDF4;border-color:#86EFAC;'>"
+                f"<div class='why-box-label' style='color:#16A34A;'>✅ Why ThoughtSpot</div>"
+                f"<p>{_e(why_thoughtspot)}</p></div>")
     if not matched_drivers:
         out += "<p style='color:#94A3B8;'>No value driver data available.</p>"
         return out
@@ -725,9 +729,10 @@ def _build_deal_narrative(ts_data: dict) -> str:
     out += "</div>"
     return out if rendered_any else ""
 
-def _deal_story_section(ts_data: dict) -> str:
+def _deal_story_section(ts_data: dict, raw: dict = None) -> str:
     import re as _re
-    ds_result  = ts_data.get("deal_stage", {})
+    raw       = raw or {}
+    ds_result = ts_data.get("deal_stage", {})
     ft_result  = ts_data.get("deal_funnel_timing", {})
     act_result = ts_data.get("activity_history_detail", ts_data.get("activity_history", {}))
     opp_detail = ts_data.get("opp_detail", {})
@@ -786,6 +791,11 @@ def _deal_story_section(ts_data: dict) -> str:
     deal_narrative = _build_deal_narrative(ts_data)
     if deal_narrative:
         out += deal_narrative
+
+    # Agent-authored prose narrative (from Step 4.5 synthesis)
+    agent_narrative = raw.get("deal_narrative", "")
+    if agent_narrative:
+        out += agent_narrative
 
     # Opp detail (days cold etc) from first od_row
     days_cold = prior_close = None
@@ -1352,9 +1362,10 @@ def build_pg_report(
     owner         = header_data.get("owner_name", "AE")
     region        = header_data.get("region", "")
     now           = datetime.datetime.utcnow().strftime("%B %d, %Y")
-    why_now       = header_data.get("why_now", "")
-    why_anything  = header_data.get("why_anything", "")
-    opp_stage     = header_data.get("opp_stage", "")
+    why_now         = header_data.get("why_now", "")
+    why_anything    = header_data.get("why_anything", "")
+    why_thoughtspot = header_data.get("why_thoughtspot", "")
+    opp_stage       = header_data.get("opp_stage", "")
     opp_name      = header_data.get("opp_name", "")
 
     # Auto-extract stage/opp from ts_data if not in header
@@ -1428,7 +1439,7 @@ def build_pg_report(
 
         elif tab_id == "why_ts":
             body += _section_header("🎯", "Why ThoughtSpot")
-            body += _why_ts_section(matched_drivers, raw, why_now=why_now, why_anything=why_anything)
+            body += _why_ts_section(matched_drivers, raw, why_now=why_now, why_anything=why_anything, why_thoughtspot=why_thoughtspot)
 
         elif tab_id == "competitor":
             body += _section_header("🔍", "Competitor Landscape")
@@ -1436,7 +1447,7 @@ def build_pg_report(
 
         elif tab_id == "deal_story":
             body += _section_header("📋", "Deal Story")
-            body += _deal_story_section(ts_data)
+            body += _deal_story_section(ts_data, raw=raw)
 
         elif tab_id == "sales_call":
             body += _section_header("📞", "Sales Call Analysis")
@@ -1495,7 +1506,8 @@ def build_pg_report(
         "Gong calls rendered":       "signal-card" in html or "No Gong call" in html or not raw.get("sales_calls"),
         "No empty claim bodies":     len(_empty_details) == 0,
         "Why Now rendered":          "Why Now" in html or not why_now,
-        "Why Anything rendered":     "Why ThoughtSpot" in html or not why_anything,
+        "Why Anything rendered":     "Why Anything" in html or not why_anything,
+        "Why ThoughtSpot rendered": "Why ThoughtSpot" in html or not why_thoughtspot,
     }
 
     failed = [k for k, v in checks.items() if not v]
