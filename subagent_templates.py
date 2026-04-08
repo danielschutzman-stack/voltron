@@ -510,6 +510,17 @@ For every module:
   4. Print "✅ {module} saved ({file_size} bytes)"
   5. Only then move to the next module
 
+STUB DETECTION (run before saving):
+Before writing to {output_file}, verify each executive has at minimum:
+  - name (non-empty)
+  - title (non-empty)
+  - bio_summary.text longer than 30 characters
+
+If an executive object fails this check → do NOT include it in the output.
+A file with 2 real profiles is better than a file with 5 stub profiles.
+If ALL profiles are stubs → do NOT save the file at all.
+Print "STUB_ONLY — not saving" and exit.
+The parent agent will detect the missing file and handle accordingly.
 If time runs out mid-run, every completed module is already on disk.
 The parent agent detects which files exist and builds from whatever is present.
 NEVER batch writes. NEVER collect everything then save at the end.
