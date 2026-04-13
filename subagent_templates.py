@@ -38,7 +38,6 @@ If any check fails → fix before saving.
 """
 
 _TS_SIGNAL_GLOSSARY = """
-## ThoughtSpot Signal Glossary — prioritize these signals when found:
 
 HIGH VALUE (direct buying triggers):
   - "analyst bottleneck" / "waiting on reports" / "BI backlog" / "report requests"
@@ -185,7 +184,6 @@ Constraints
 - Every list item MUST include a "source" field.
 """ + _CITATION_RULE + _QUALITY_GATE,
 
-
 "tsumble": """
 You are TSumbleV1, a job openings research specialist. Your job is to find
 current open roles at a company.
@@ -253,7 +251,6 @@ Constraints
 - Read-only.
 - Every role_highlight and hiring_trend MUST include a "source" field and "url".
 """ + _CITATION_RULE + _QUALITY_GATE,
-
 
 "competitor_intel": """
 You are a competitive intelligence specialist. Identify which analytics and BI
@@ -324,15 +321,14 @@ Constraints
 - Every entry MUST include "source" and "url".
 """ + _CITATION_RULE + _QUALITY_GATE,
 
-
 "exec_profile": """
 You are an executive research specialist building stakeholder profiles for
 a ThoughtSpot AE.
 
-IMPORTANT: You must research executives for ALL FOUR legs of the ThoughtSpot
-4-Leg Stool framework, regardless of what is in Salesforce. If an executive
-is not found in Salesforce, research them from LinkedIn and web sources and
-flag them as not yet in Salesforce. Empty legs are never acceptable.
+IMPORTANT: Follow the Priority Note below exactly. Known contacts are always
+researched first. Gap-fill for empty legs is secondary and optional if time
+runs short. An empty leg with a clear note is acceptable. A timed-out subagent
+that produced nothing is not.
 
 The 4 legs and what to look for:
   DATA leg: CDO, Chief Data Officer, VP/Head of Data, Data Platform, Data Engineering,
@@ -367,8 +363,9 @@ Research Tasks
    - Write one ThoughtSpot talking point tailored to their role
 4. Set in_sfdc=true only if the person appears in the AE's SFDC context above.
    Set in_sfdc=false for everyone found via LinkedIn or web research.
-5. Aim for at least one executive per leg. If no executive found for a leg,
-   note it clearly — do not fabricate.
+5. After known contacts are done: attempt one executive per missing leg.
+   If no executive found for a leg, note it clearly — do not fabricate.
+   If time is running low, skip remaining gap-fill and save immediately.
 
 HARD CUTOFF: 480 seconds from start. Save and stop regardless of completion.
 Partial profiles are better than no profiles.
@@ -411,7 +408,6 @@ Constraints
   a "source" field and "url".
 - Aim for all 4 legs. Note any missing legs in "legs_missing".
 """ + _CITATION_RULE + _QUALITY_GATE,
-
 
 "case_study_matcher": """
 You are a ThoughtSpot case study matching specialist. Your job is to find the
@@ -478,7 +474,6 @@ Constraints
 - Every recommended_case_study MUST include "source", "source_type", and "url".
 """ + _CITATION_RULE + _QUALITY_GATE,
 
-
 "combined_fast_sweep": """
 You are a B2B sales research specialist running a fast sweep for a ThoughtSpot AE.
 Your job is to complete web research and job postings for one account within 8 minutes.
@@ -507,7 +502,7 @@ For every module:
   1. Run searches for this module
   2. Synthesize results
   3. Write JSON to the output file RIGHT NOW
-  4. Print "✅ {module} saved ({file_size} bytes)"
+  4. Print "✅ {{module}} saved ({{file_size}} bytes)"
   5. Only then move to the next module
 
 STUB DETECTION (run before saving):
@@ -586,7 +581,6 @@ Constraints
 - Every list item MUST include a "source" field.
 """ + _CITATION_RULE + _QUALITY_GATE,
 
-
 "combined_deep_research": """
 You are a B2B competitive intelligence specialist running targeted research
 for a ThoughtSpot AE. Your job is to complete competitor intel and case study
@@ -615,7 +609,7 @@ For every module:
   1. Run searches for this module
   2. Synthesize results
   3. Write JSON to the output file RIGHT NOW
-  4. Print "✅ {module} saved ({file_size} bytes)"
+  4. Print "✅ {{module}} saved ({{file_size}} bytes)"
   5. Only then move to the next module
 
 If time runs out mid-run, every completed module is already on disk.
@@ -682,7 +676,6 @@ Constraints
 - Every list item MUST include a "source" field.
 """ + _CITATION_RULE + _QUALITY_GATE,
 
-
 "combined_account_research": """
 You are a B2B sales research specialist. Your job is to conduct comprehensive
 account research for a ThoughtSpot AE, combining web research, job postings,
@@ -715,7 +708,7 @@ For every module:
   1. Run searches for this module
   2. Synthesize results
   3. Write JSON to the output file RIGHT NOW
-  4. Print "✅ {module} saved ({file_size} bytes)"
+  4. Print "✅ {{module}} saved ({{file_size}} bytes)"
   5. Only then move to the next module
 
 If time runs out mid-run, every completed module is already on disk.
@@ -950,7 +943,6 @@ Include ALL meaningful signals — do not limit to 10.
 Complete all pages before saving.
 """
 
-
 TEMPLATES["outreach_generator"] = """
 You are an Outreach Generator subagent for ThoughtSpot. Your job is to write
 highly personalized email and LinkedIn sequences for key contacts at {account_name}.
@@ -1078,7 +1070,6 @@ For each annotation:
 - Complete all sequences before saving — do not save partial output
 """
 
-
 def render(template_name: str, **kwargs) -> str:
     """
     Render a named template with the given keyword arguments.
@@ -1117,14 +1108,12 @@ def render(template_name: str, **kwargs) -> str:
 
     return template.format(**merged)
 
-
 WAIT_FIRST_MS   = 60_000
 WAIT_SECOND_MS  = 60_000
 WAIT_FINAL_MS   = 90_000
 WAIT_EXEC_MS    = 300_000  # v5.8: increased from 180s to 300s for exec profiles
 
-
-def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: str = "") -> dict:
+def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: str = "", known_contact_count: int = 0) -> dict:
     """
     v5.8: Always returns skip=False — exec profiles always run.
     Stage only affects priority order and profile count, never skips entirely.
@@ -1148,6 +1137,13 @@ def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: st
     m = _re.search(r's?(\d)', stage_str)
     stage_num = int(m.group(1)) if m else 0
 
+    # Cap max_profiles: when contacts are already known, only research gap-fill beyond them.
+    # Formula: known_contacts + 2 gap-fill slots, floored at 3, never exceeds stage ceiling.
+    def _cap(stage_ceiling: int) -> int:
+        if known_contact_count <= 0:
+            return stage_ceiling
+        return max(3, min(stage_ceiling, known_contact_count + 2))
+
     # Build stakeholder list — always research all 4 legs
     known_parts = []
     if champion_name:
@@ -1158,16 +1154,15 @@ def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: st
     known_str = "; ".join(known_parts) if known_parts else "No confirmed stakeholders yet"
 
     if stage_num >= 4:
-        # Late stage — champion and EB known, focus on gaps and validation
         priority_note = (
-            f"Late-stage deal (S{stage_num}). Known: {known_str}. "
-            f"Focus on: (1) confirming champion/EB titles and LinkedIn profiles, "
-            f"(2) finding any leg still empty in the 4-Leg Stool, "
-            f"(3) finding executive sponsor if not yet identified."
+            f"START HERE — research known contacts first (do not skip): {known_str}. "
+            f"Only after known contacts are profiled: (1) confirm any empty leg in the 4-Leg Stool, "
+            f"(2) find executive sponsor if not yet identified. "
+            f"If time runs low, save known contacts and stop — gap-fill is optional."
         )
         return {
             "skip":          False,
-            "max_profiles":  6,
+            "max_profiles":  _cap(6),
             "stakeholders":  known_str,
             "priority_note": priority_note,
             "rationale":     f"S{stage_num} — all 4 legs required, focus on validation and gap-filling",
@@ -1176,14 +1171,14 @@ def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: st
     if stage_num >= 2:
         # Mid stage — research all legs, prioritize champion and EB
         priority_note = (
-            f"Mid-stage deal (S{stage_num}). Known: {known_str}. "
-            f"Priority: (1) champion and EB profiles first, "
-            f"(2) then find one executive per missing leg, "
-            f"(3) set in_sfdc=false for anyone not in SFDC."
+            f"START HERE — research known contacts first (do not skip): {known_str}. "
+            f"Only after known contacts are profiled: find one senior executive per missing leg. "
+            f"Set in_sfdc=false for anyone not in SFDC. "
+            f"If time runs low, save known contacts and stop — gap-fill is optional."
         )
         return {
             "skip":          False,
-            "max_profiles":  8,
+            "max_profiles":  _cap(8),
             "stakeholders":  known_str,
             "priority_note": priority_note,
             "rationale":     f"S{stage_num} — all 4 legs required, champion+EB priority",
@@ -1191,18 +1186,18 @@ def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: st
 
     # Early stage — full research across all legs
     priority_note = (
-        f"Early-stage deal (S{stage_num}). Known: {known_str}. "
-        f"Research all 4 legs thoroughly. Find the most senior executive "
-        f"available for each leg. Set in_sfdc=false for anyone found via LinkedIn/web."
+        f"START HERE — research known contacts first (do not skip): {known_str}. "
+        f"Only after known contacts are profiled: find one senior executive per missing leg. "
+        f"Set in_sfdc=false for anyone found via LinkedIn/web. "
+        f"If time runs low, save known contacts and stop — gap-fill is optional."
     )
     return {
         "skip":          False,
-        "max_profiles":  10,
+        "max_profiles":  _cap(10),
         "stakeholders":  known_str,
         "priority_note": priority_note,
         "rationale":     f"S{stage_num}/early — full 4-leg research, all executives",
     }
-
 
 def build_outreach_skeleton(sequences: list) -> str:
     """
@@ -1235,10 +1230,8 @@ def build_outreach_skeleton(sequences: list) -> str:
         })
     return _json.dumps(skel, indent=2)
 
-
 def list_templates() -> list:
     return sorted(TEMPLATES.keys())
-
 
 def get_required_fields(template_name: str) -> dict:
     if template_name not in TEMPLATES:
