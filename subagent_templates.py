@@ -111,6 +111,7 @@ TEMPLATE_DEFAULTS = {
     },
     "outreach_generator": {
         "date_from": "01/01/2024",
+        "gtmbuddy_file": "/sandbox/gtmbuddy_fallback_map.json",
     },
 }
 
@@ -913,6 +914,7 @@ Save a JSON file to {output_file} with this structure:
       "contact_email": "",
       "ts_rep_email": "",
       "call_name": "",
+      "call_date": "",
       "brief_summary": "",
       "next_steps": "",
       "recommended_action": ""
@@ -941,6 +943,16 @@ Sort consolidated_next_steps by priority: HIGH → MED → LOW → DO NOT CONTAC
 
 Include ALL meaningful signals — do not limit to 10.
 Complete all pages before saving.
+
+## Schema Compliance Rules (non-negotiable)
+
+- sentiment MUST be exactly one of: POSITIVE, NEGATIVE, COLD (ALL CAPS). Never lowercase.
+- brief_summary MUST be a plain string — 1-3 sentences summarizing the call. Never a list.
+- contact_name MUST be the external contact's name (not a ThoughtSpot rep). Derive from
+  Call Participant Emails by excluding @thoughtspot.com addresses.
+- call_date MUST be populated from Activity Created Date, formatted as YYYY-MM-DD. Never leave blank.
+- Do NOT add extra keys (key_themes, participants, competitors_mentioned, pain_points_mentioned, etc.).
+  Output ONLY the keys defined in the schema above.
 """
 
 TEMPLATES["outreach_generator"] = """
@@ -1068,6 +1080,37 @@ For each annotation:
 - Case study metrics must come from {case_studies_file} — never fabricated
 - If confidence is "assumed" for more than 2 claims in one email → rewrite
 - Complete all sequences before saving — do not save partial output
+
+## STEP 5 — GTM Buddy Asset References
+
+A GTM Buddy asset map is available at: {gtmbuddy_file}
+Base viewer URL: https://thoughtspot.gtmbuddy.io/viewer/{{id}}
+
+Load the JSON file and apply:
+
+1. Find "Cold Email - Best Practices" key — read the asset title and apply its principles
+   to every email you write in this session.
+
+2. Find "LinkedIn outreach" key — use the messaging house assets as tone and positioning
+   reference for all LinkedIn messages.
+
+3. Find the confirmed competitor key (e.g. "Tableau competitive", "Looker competitive",
+   "Power BI competitive") — reference the competitive angle in Email 2 subject line.
+   Cite the asset as: source="GTM Buddy", url="https://thoughtspot.gtmbuddy.io/viewer/{{id}}"
+
+4. Find top case study from "Case Studies" key — cite the asset title + GTM Buddy link
+   in Email 3 or the LinkedIn note.
+   Cite as: source="GTM Buddy", url="https://thoughtspot.gtmbuddy.io/viewer/{{id}}"
+
+5. Add a "gtmbuddy_refs" array at the SEQUENCE level (once per contact, not per email):
+   "gtmbuddy_refs": [
+     {{"id": "...", "title": "...", "url": "https://thoughtspot.gtmbuddy.io/viewer/...", "category": "..."}}
+   ]
+   Include every GTM Buddy asset you referenced in that contact's sequence.
+
+All claim_annotations that reference a GTM Buddy asset MUST include:
+  "source": "https://thoughtspot.gtmbuddy.io/viewer/{{id}}"
+  "source_type": "gtm_buddy"
 """
 
 def render(template_name: str, **kwargs) -> str:
@@ -1137,8 +1180,6 @@ def get_exec_profile_scope(deal_stage: str, champion_name: str = "", eb_name: st
     m = _re.search(r's?(\d)', stage_str)
     stage_num = int(m.group(1)) if m else 0
 
-    # Cap max_profiles: when contacts are already known, only research gap-fill beyond them.
-    # Formula: known_contacts + 2 gap-fill slots, floored at 3, never exceeds stage ceiling.
     def _cap(stage_ceiling: int) -> int:
         if known_contact_count <= 0:
             return stage_ceiling
