@@ -963,6 +963,7 @@ def _gong_calls_section(raw: dict) -> str:
             sent_color = "#16a34a" if sentiment == "POSITIVE" else "#ef4444" if sentiment == "NEGATIVE" else "#d97706"
             contact    = _e(s.get("contact_name", "") or s.get("contact_email", ""))
             call_name  = _e(s.get("call_name", ""))
+            call_date  = _e(s.get("call_date", ""))
             summary    = _e(s.get("brief_summary", "") or s.get("summary", ""))
             next_s     = _e(s.get("next_steps", "") or s.get("highlights_next_steps", ""))
             action     = _e(s.get("recommended_action", ""))
@@ -970,6 +971,7 @@ def _gong_calls_section(raw: dict) -> str:
             out += f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'><span style='color:{sent_color};font-weight:700;'>{sentiment}</span>"
             if contact:   out += f"<b style='color:{NAVY};'>{contact}</b>"
             if call_name: out += f"<span style='color:#94A3B8;font-size:11px;'>· {call_name}</span>"
+            if call_date: out += f"<span style='color:#94A3B8;font-size:11px;'>· {call_date}</span>"
             out += "</div>"
             if summary: out += f"<p style='margin:0 0 6px;font-size:13px;'>{summary}</p>"
             if next_s:  out += f"<p style='margin:0 0 4px;font-size:12px;'><b>Next Steps:</b> {next_s}</p>"
@@ -1009,6 +1011,22 @@ def _6sense_section(ts_data: dict) -> str:
     return out
 
 def _case_studies_section(raw: dict, account_name: str) -> str:
+    # GTM Buddy is the authoritative source — use pre-rendered cards when available
+    gtmbuddy_html = raw.get("gtmbuddy_cards_html", "")
+    if gtmbuddy_html:
+        source_header = (
+            "<div style='margin-bottom:12px;padding:8px 12px;background:#f8fafc;"
+            "border:1px solid #e2e8f0;border-radius:6px;'>"
+            "<span style='font-size:11px;color:#64748b;font-weight:600;'>"
+            "📚 Source: "
+            "<a href='https://thoughtspot.gtmbuddy.io' target='_blank' "
+            "style='color:#3b82f6;text-decoration:none;'>GTM Buddy</a>"
+            " — assets matched to this account’s competitor, vertical, and use case"
+            "</span></div>"
+        )
+        return source_header + gtmbuddy_html
+
+    # Fallback: web-researched case studies
     studies = raw.get("case_studies", {}).get("recommended_case_studies", [])
     if not studies: return "<p style='color:#94A3B8;'>No case studies matched.</p>"
     out = "<div style='display:flex;flex-direction:column;gap:12px;'>"
@@ -1580,15 +1598,26 @@ def build_onepager(
                 value_statements.append(hook)
 
     proof_points = []
-    for s in studies[:3]:
-        if not isinstance(s, dict): continue
-        # v5.8: try multiple key names for company and metric
-        company = _text(s.get("company", s.get("customer", s.get("name", ""))))
-        metric  = _text(s.get("key_metric", s.get("metric", s.get("outcome", ""))))
-        # v5.8: try multiple key names for URL
-        url     = s.get("url", "") or s.get("source_url", "") or s.get("link", "")
-        if company and metric:
-            proof_points.append({"company": company, "metric": metric, "url": url})
+    # GTM Buddy is the authoritative source for proof points
+    gtmbuddy_assets = raw.get("gtmbuddy_assets", [])
+    if gtmbuddy_assets:
+        for a in gtmbuddy_assets[:4]:
+            if not isinstance(a, dict): continue
+            proof_points.append({
+                "company":  a.get("title", ""),
+                "metric":   a.get("rationale", ""),
+                "url":      a.get("url", ""),
+                "source":   "GTM Buddy",
+            })
+    else:
+        # Fallback: web-researched case studies
+        for s in studies[:3]:
+            if not isinstance(s, dict): continue
+            company = _text(s.get("company", s.get("customer", s.get("name", ""))))
+            metric  = _text(s.get("key_metric", s.get("metric", s.get("outcome", ""))))
+            url     = s.get("url", "") or s.get("source_url", "") or s.get("link", "")
+            if company and metric:
+                proof_points.append({"company": company, "metric": metric, "url": url})
 
     onepager_css = f"""
 <style>
@@ -1657,10 +1686,16 @@ li::before {{ content: '→'; color: {BLUE}; font-weight: 700; flex-shrink: 0; m
 
     if proof_points:
         body += "<h2>Customer Proof Points</h2>"
+        gtmbuddy_assets = raw.get("gtmbuddy_assets", [])
+        if gtmbuddy_assets:
+            body += ("<div style='margin-bottom:10px;font-size:11px;color:#64748b;font-weight:600;'>"
+                     "📚 Source: <a href='https://thoughtspot.gtmbuddy.io' target='_blank' "
+                     "style='color:#3b82f6;text-decoration:none;'>GTM Buddy</a></div>")
         for p in proof_points:
             url     = p["url"]
             company = _e(p["company"])
             metric  = _e(p["metric"])
+            source  = p.get("source", "")
             if url:
                 body += (f"<a href='{_e(url)}' target='_blank' class='proof-card'>"
                          f"<span class='proof-metric'>📊 {metric}</span>"
